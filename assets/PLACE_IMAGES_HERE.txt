@@ -1,0 +1,10 @@
+请手动把图片放到本目录，并确保文件名完全一致：
+
+- bg_classroom.png
+- char_normal.png
+- char_happy.png
+- char_angry.png
+- char_shy.png
+
+本项目不会使用任何网图 URL，所有图片都从本地路径读取。
+
