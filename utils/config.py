@@ -65,16 +65,24 @@ def load_config() -> AppConfig:
     max_retries = 2
 
     # -----------------------------
-    # 敏感配置：只从 .env 读
+    # 敏感配置：只从 .env 读（支持 DeepSeek / OpenAI 兼容接口）
     # -----------------------------
-    api_key = (os.getenv("DeepSeek_API_KEY") or "").strip()
-    base_url_raw = (os.getenv("DeepSeek_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip()
+    api_key = (
+        os.getenv("DeepSeek_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    base_url_raw = (
+        os.getenv("DeepSeek_BASE_URL")
+        or os.getenv("OPENAI_API_BASE")
+        or ""
+    ).strip()
     base_url = base_url_raw or None
-    model = (os.getenv("DeepSeek_MODEL") or "").strip() or default_model
+    model = (os.getenv("DeepSeek_MODEL") or os.getenv("OPENAI_MODEL") or "").strip() or default_model
 
     if not api_key:
         raise RuntimeError(
-            "缺少敏感配置：未在 .env 中设置 API_KEY。"
+            "缺少敏感配置：请在 .env 中设置 DeepSeek_API_KEY 或 OPENAI_API_KEY。"
         )
 
     llm = LLMConfig(

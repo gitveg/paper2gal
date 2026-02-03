@@ -142,13 +142,19 @@ def run_headless(
     interactive: bool,
     auto_strategy: str,
     export_path: Optional[Path],
+    use_mineru: bool,
 ) -> None:
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF 不存在：{pdf_path}")
 
-    chunks = load_and_chunk_pdf(pdf_path, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    chunks = load_and_chunk_pdf(
+        pdf_path,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        use_mineru=use_mineru,
+    )
     if not chunks:
-        raise RuntimeError("没有解析到任何文本（可能是扫描版图片 PDF）。")
+        raise RuntimeError("没有解析到任何文本（可能是扫描版图片 PDF）。可尝试配置 MINERU_API_TOKEN 并使用 --use-mineru。")
 
     if max_chunks is not None:
         chunks = chunks[: max(0, max_chunks)]
@@ -192,6 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--chunk-size", type=int, default=1400)
     p.add_argument("--chunk-overlap", type=int, default=180)
     p.add_argument("--max-chunks", type=int, default=None, help="限制最多处理多少个 chunk（调试用）")
+    p.add_argument("--use-mineru", action="store_true", help="强制使用 MinerU OCR（需要 MINERU_API_TOKEN）")
+    p.add_argument("--no-mineru", action="store_true", help="禁用 MinerU OCR（默认启用）")
 
     p.add_argument(
         "--mode",
@@ -247,6 +255,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             interactive=interactive,
             auto_strategy=str(args.auto_strategy),
             export_path=export_path,
+            use_mineru=False if bool(args.no_mineru) else True,
         )
         return 0
     except Exception as e:
