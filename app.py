@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 
 from utils.pdf_loader import load_and_chunk_pdf, PdfChunk
+from utils.mineru_parser import token_available
 from utils.script_engine import ScriptGenerator
 
 
@@ -152,6 +153,7 @@ def init_state() -> None:
     st.session_state.setdefault("answered", False)
 
     st.session_state.setdefault("generator_ready", False)
+    st.session_state.setdefault("use_mineru", True)
 
 
 def ensure_assets_notice() -> None:
@@ -348,6 +350,15 @@ def main() -> None:
 
         st.markdown("#### 上传 PDF")
         uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
+        mineru_ready = token_available()
+        default_use_mineru = bool(st.session_state.use_mineru) and mineru_ready
+        st.session_state.use_mineru = st.checkbox(
+            "Use MinerU OCR for scanned PDFs (requires MINERU_API_TOKEN)",
+            value=default_use_mineru,
+            disabled=not mineru_ready,
+        )
+        if not mineru_ready:
+            st.caption("Tip: set MINERU_API_TOKEN to enable OCR parsing.")
 
         st.markdown("---")
         st.markdown(
@@ -387,9 +398,12 @@ def main() -> None:
                 return
 
             with st.spinner("解析 PDF 并切分 chunk..."):
-                chunks = load_and_chunk_pdf(pdf_path)
+                chunks = load_and_chunk_pdf(
+                    pdf_path,
+                    use_mineru=bool(st.session_state.use_mineru),
+                )
                 if not chunks:
-                    st.error("没有解析到任何文本。可能是扫描版图片 PDF。")
+                    st.error("没有解析到任何文本。可能是扫描版图片 PDF。可尝试配置 MINERU_API_TOKEN 并启用 OCR。")
                     if st.button("回到封面"):
                         st.session_state.state = "SETUP"
                         st.rerun()
