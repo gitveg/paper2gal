@@ -25,6 +25,10 @@ def _print_divider(title: str = "") -> None:
 
 def _render_item(item: Dict[str, Any]) -> None:
     t = item.get("type")
+    if t == "sub_head":
+        title = item.get("title", "")
+        print(f"  ──────── {title} ────────")
+        return
     emo = item.get("emotion")
     if t == "dialogue":
         speaker = item.get("speaker", "奈奈")
@@ -107,7 +111,9 @@ def _play_script_items(
         _render_item(item)
 
         t = item.get("type")
-        if t in {"quiz", "choice"}:
+        if t == "sub_head":
+            pass  # 无需选项，直接继续
+        elif t in {"quiz", "choice"}:
             options = item.get("options") or []
             if not isinstance(options, list) or not options:
                 print("（此条缺少 options，跳过）")
@@ -169,8 +175,13 @@ def run_headless(
     print(f"交互：{'是' if interactive else '否'}（auto_strategy={auto_strategy}）")
 
     for chunk in chunks:
-        _print_divider(f"Chunk #{chunk.index}")
-        script_items = gen.generate_script(chunk.text, chunk_index=chunk.index)
+        section_label = f" {chunk.section_title}" if getattr(chunk, "section_title", "") else ""
+        _print_divider(f"Chunk #{chunk.index}{section_label}")
+        script_items = gen.generate_script(
+            chunk.text,
+            chunk_index=chunk.index,
+            section_title=getattr(chunk, "section_title", "") or None,
+        )
 
         export.append(
             {

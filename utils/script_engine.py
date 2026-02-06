@@ -19,13 +19,14 @@ except Exception as e:  # pragma: no cover
 
 SYSTEM_PROMPT = """
 你是一个傲娇但学识渊博的二次元猫娘“奈奈”。你的任务是陪用户读论文。
-输入是一段枯燥的论文片段。你需要把它改编成一段“对话剧本”。
+输入是论文的**一整节**（例如 Abstract、Introduction、或 3 Method）。你需要把它改编成一段“对话剧本”。
 
 要求：
 1. **去学术化**：用口语、比喻来解释复杂的概念（比如把“神经网络”比作“连接起来的猫脑”）。
 2. **情绪价值**：不要只讲课。要穿插吐槽（比如“这个作者写的句子好长啊喵！”）、撒娇或严厉。
 3. **互动设计**：在关键知识点，设计一个“选项”让用户选，或者设计一个“小测验”。
-4. **格式严格**：必须输出为 JSON 列表，包含 `speaker` (who), `text` (dialogue), `emotion` (image_key), `type` (dialogue/quiz/choice)。
+4. **层次划分**：若本节内容较多（如 Method、Related Work），请**按层次划分子节**。在子节开头插入一条 type="sub_head"，且带 "title" 字段（子节标题，如 "3.1 概述"）。子节内再写 dialogue/quiz/choice。这样用户能分层次理解，每层可含多个对话和题目。
+5. **格式严格**：输出为 JSON 列表。type 只能是 dialogue / quiz / choice / sub_head。sub_head 项只需 type 与 title；其余项同前（speaker, text, emotion, type；quiz 需 question/options/correct_answer/feedback_*；choice 需 prompt/options/emotion）。
 """.strip()
 
 
@@ -99,15 +100,26 @@ class ScriptGenerator:
             kwargs.pop("openai_api_base", None)
             self.llm = ChatOpenAI(**kwargs)
 
-    def generate_script(self, chunk_text: str, *, chunk_index: int) -> List[Dict[str, Any]]:
+    def generate_script(
+        self,
+        chunk_text: str,
+        *,
+        chunk_index: int,
+        section_title: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         返回一个 JSON 列表（Python list[dict]），供前端逐条播放。
+        section_title 为当前章节名（如 Abstract / 3 Method），用于提示 LLM。
         """
         chunk_text = (chunk_text or "").strip()
         if not chunk_text:
             return self._fallback_script("这一段好像是空的……你是不是上传了扫描版？", chunk_index=chunk_index)
 
-        user_prompt = self._build_user_prompt(chunk_text=chunk_text, chunk_index=chunk_index)
+        user_prompt = self._build_user_prompt(
+            chunk_text=chunk_text,
+            chunk_index=chunk_index,
+            section_title=section_title or "",
+        )
 
         last_err: Optional[Exception] = None
         for _ in range(self.max_retries + 1):
@@ -136,22 +148,29 @@ class ScriptGenerator:
             msg += f"\n（内部解析失败：{type(last_err).__name__}）"
         return self._fallback_script(msg, chunk_index=chunk_index, extra_hint=chunk_text[:260])
 
-    def _build_user_prompt(self, *, chunk_text: str, chunk_index: int) -> str:
-        # 明确要求：只输出 JSON 数组，不要 markdown，不要解释
+    def _build_user_prompt(
+        self,
+        *,
+        chunk_text: str,
+        chunk_index: int,
+        section_title: str = "",
+    ) -> str:
+        section_line = f"当前章节：{section_title}\n\n" if section_title else ""
         return f"""
-输入论文片段（chunk #{chunk_index}）：
+{section_line}输入论文本节全文（chunk #{chunk_index}）：
 \"\"\"{chunk_text}\"\"\"
 
 请只输出 JSON 数组（list），不要输出任何额外文本、不要用 ``` 包裹。
 
 约束：
-- type 只能是 dialogue / quiz / choice
+- type 只能是 dialogue / quiz / choice / sub_head
+- sub_head 项：仅需 type="sub_head" 与 title="子节标题"（用于长节按层次划分）
 - emotion 只能在以下 key 里选一个：char_normal, char_happy, char_angry, char_shy
 - dialogue 项必须包含 speaker,text,emotion,type
 - quiz 项必须包含：type="quiz", question, options(数组), correct_answer, feedback_correct, feedback_wrong
 - choice 项必须包含：type="choice", prompt, options(数组), emotion
 
-请把解释写进对话文本里，而不是 JSON 外面。
+若本节内容较多，请用 sub_head 划分子节，再在子节内写 dialogue/quiz/choice。请把解释写进对话文本里，而不是 JSON 外面。
 """.strip()
 
     def _parse_json_list(self, raw: str) -> List[Any]:
@@ -181,7 +200,13 @@ class ScriptGenerator:
             if not isinstance(it, dict):
                 continue
             t = str(it.get("type") or "").strip()
-            if t not in {"dialogue", "quiz", "choice"}:
+            if t not in {"dialogue", "quiz", "choice", "sub_head"}:
+                continue
+
+            if t == "sub_head":
+                title = str(it.get("title") or "").strip()
+                if title:
+                    out.append({"type": "sub_head", "title": title})
                 continue
 
             if t == "dialogue":

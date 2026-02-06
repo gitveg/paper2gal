@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -185,7 +186,11 @@ def load_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> None:
     """
     gen = ScriptGenerator()
     chunk = chunks[chunk_idx]
-    script = gen.generate_script(chunk.text, chunk_index=chunk.index)
+    script = gen.generate_script(
+        chunk.text,
+        chunk_index=chunk.index,
+        section_title=getattr(chunk, "section_title", "") or None,
+    )
 
     st.session_state.script_items = script
     st.session_state.script_idx = 0
@@ -257,7 +262,11 @@ def render_game_layer(item: Optional[Dict[str, Any]]) -> None:
         text = "还没有脚本内容……你可以回到封面重新上传 PDF。"
     else:
         t = item.get("type")
-        if t == "dialogue":
+        if t == "sub_head":
+            speaker = "奈奈"
+            text = f"【小节】{item.get('title') or ''}"
+            hint = "点击“下一步”继续。"
+        elif t == "dialogue":
             speaker = str(item.get("speaker") or "奈奈")
             text = str(item.get("text") or "")
             hint = "点击“下一步”继续。"
@@ -269,6 +278,10 @@ def render_game_layer(item: Optional[Dict[str, Any]]) -> None:
             speaker = "奈奈"
             text = str(item.get("prompt") or "你选哪个？")
             hint = "先选择一个选项。"
+        else:
+            speaker = "奈奈"
+            text = str(item.get("text") or json.dumps(item, ensure_ascii=False))
+            hint = "点击“下一步”继续。"
 
     feedback = st.session_state.current_feedback
     if feedback:
@@ -318,7 +331,7 @@ def render_interaction(item: Optional[Dict[str, Any]]) -> None:
 
             st.markdown("---")
 
-        # 下一步：quiz/choice 必须先作答（answered=True）才允许前进
+        # 下一步：quiz/choice 必须先作答才允许前进；sub_head/dialogue 可直接下一步
         can_next = True
         if item and item.get("type") in {"quiz", "choice"}:
             can_next = bool(st.session_state.answered)

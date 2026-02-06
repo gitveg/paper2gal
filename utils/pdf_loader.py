@@ -14,11 +14,12 @@ from utils.mineru_parser import parse_pdf_to_markdown, token_available
 
 @dataclass(frozen=True)
 class PdfChunk:
-    """Smallest text unit for script generation."""
+    """One section or one text unit for script generation."""
 
     index: int
     text: str
     source: str
+    section_title: str = ""  # 章节名，如 Abstract / 1 Introduction（MinerU 时有值）
 
 
 def _load_docs_with_pypdf(pdf_path: Path) -> List[Document]:
@@ -146,13 +147,25 @@ def load_and_chunk_pdf(
         if not docs and mineru_fallback and token_available():
             docs = _load_docs_with_mineru(pdf_path, output_dir=output_dir)
 
+    chunks: List[PdfChunk] = []
+    # MinerU：按 section 为粒度，不再对 section 内做字符切分，保持连贯
+    is_mineru = docs and str((docs[0].metadata or {}).get("parser")) == "mineru"
+    if is_mineru:
+        for d in docs:
+            text = (d.page_content or "").strip()
+            if not text:
+                continue
+            source = str(d.metadata.get("source") or pdf_path.name)
+            section_title = str(d.metadata.get("section_title") or "").strip()
+            chunks.append(PdfChunk(index=len(chunks), text=text, source=source, section_title=section_title))
+        return chunks
+
+    # pypdf 或无 section 时：按字符分块
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         separators=["\n\n", "\n", "。", "，", ";", "；", ",", " ", ""],
     )
-
-    chunks: List[PdfChunk] = []
     for d in splitter.split_documents(docs):
         text = (d.page_content or "").strip()
         if not text:
