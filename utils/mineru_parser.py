@@ -22,15 +22,14 @@ def _load_dotenv_once() -> None:
     if _DOTENV_LOADED:
         return
     root = Path(__file__).resolve().parents[1]
-    cwd_env = Path.cwd() / ".env"
-    root_env = root / ".env"
     utils_env = root / "utils" / ".env"
-    if cwd_env.exists():
-        load_dotenv(dotenv_path=str(cwd_env), override=False)
-    elif root_env.exists():
-        load_dotenv(dotenv_path=str(root_env), override=False)
-    elif utils_env.exists():
-        load_dotenv(dotenv_path=str(utils_env), override=False)
+    root_env = root / ".env"
+    cwd_env = Path.cwd() / ".env"
+    # 只加载一个 .env：优先项目内（utils > root），最后才 cwd，避免 Streamlit 从别处启动时用到错误的 .env 导致 401
+    for path in (utils_env, root_env, cwd_env):
+        if path.exists():
+            load_dotenv(dotenv_path=str(path), override=False)
+            break
     _DOTENV_LOADED = True
 
 
@@ -41,6 +40,9 @@ def _get_token(explicit: Optional[str] = None) -> Optional[str]:
         return token or None
     env_token = os.getenv("MINERU_API_TOKEN") or os.getenv("MINERU_TOKEN")
     token = (env_token or "").strip()
+    # 去掉 .env 里可能带的首尾引号，避免 401
+    if token and len(token) >= 2 and token[0] == token[-1] and token[0] in ('"', "'"):
+        token = token[1:-1].strip()
     return token or None
 
 

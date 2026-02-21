@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
+import requests
 
 from utils.mineru_parser import parse_pdf_to_markdown, token_available
 
@@ -20,6 +21,7 @@ class PdfChunk:
     text: str
     source: str
     section_title: str = ""  # 章节名，如 Abstract / 1 Introduction（MinerU 时有值）
+    parser: str = "pypdf"  # "mineru" | "pypdf"，用于 debug 显示当前解析方式
 
 
 def _load_docs_with_pypdf(pdf_path: Path) -> List[Document]:
@@ -139,13 +141,23 @@ def load_and_chunk_pdf(
 
     docs: List[Document] = []
     if use_mineru and token_available():
-        docs = _load_docs_with_mineru(pdf_path, output_dir=output_dir)
+        try:
+            docs = _load_docs_with_mineru(pdf_path, output_dir=output_dir)
+        except (requests.exceptions.HTTPError, requests.exceptions.RequestException) as e:
+            # 401 Unauthorized 或网络错误时自动回退到 pypdf，避免 UI 直接报错
+            if mineru_fallback:
+                docs = _load_docs_with_pypdf(pdf_path)
+            else:
+                raise RuntimeError(f"MinerU 请求失败（{e}），可关闭「Use MinerU OCR」或检查 MINERU_API_TOKEN。") from e
         if not docs and mineru_fallback:
             docs = _load_docs_with_pypdf(pdf_path)
     else:
         docs = _load_docs_with_pypdf(pdf_path)
         if not docs and mineru_fallback and token_available():
-            docs = _load_docs_with_mineru(pdf_path, output_dir=output_dir)
+            try:
+                docs = _load_docs_with_mineru(pdf_path, output_dir=output_dir)
+            except (requests.exceptions.HTTPError, requests.exceptions.RequestException):
+                pass
 
     chunks: List[PdfChunk] = []
     # MinerU：按 section 为粒度，不再对 section 内做字符切分，保持连贯
@@ -157,7 +169,7 @@ def load_and_chunk_pdf(
                 continue
             source = str(d.metadata.get("source") or pdf_path.name)
             section_title = str(d.metadata.get("section_title") or "").strip()
-            chunks.append(PdfChunk(index=len(chunks), text=text, source=source, section_title=section_title))
+            chunks.append(PdfChunk(index=len(chunks), text=text, source=source, section_title=section_title, parser="mineru"))
         return chunks
 
     # pypdf 或无 section 时：按字符分块
@@ -171,6 +183,6 @@ def load_and_chunk_pdf(
         if not text:
             continue
         source = str(d.metadata.get("source") or pdf_path.name)
-        chunks.append(PdfChunk(index=len(chunks), text=text, source=source))
+        chunks.append(PdfChunk(index=len(chunks), text=text, source=source, parser="pypdf"))
 
     return chunks

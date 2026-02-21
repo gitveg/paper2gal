@@ -13,161 +13,257 @@ from utils.pdf_loader import load_and_chunk_pdf, PdfChunk
 from utils.mineru_parser import token_available
 from utils.script_engine import ScriptGenerator
 
-
-# -----------------------------
-# 资源路径（必须是本地路径）
-# 注意：你需要手动把图片放到 assets/ 目录下（见 README.md 与 assets/PLACE_IMAGES_HERE.txt）
-# -----------------------------
+# ──────────────────────────────────────────────
+# 本地资源路径（必须手动放入 assets/ 目录）
+# ──────────────────────────────────────────────
 ROOT_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = ROOT_DIR / "assets"
 
 ASSET_BG = ASSETS_DIR / "bg_classroom.png"
 ASSET_CHAR = {
     "char_normal": ASSETS_DIR / "char_normal.png",
-    "char_happy": ASSETS_DIR / "char_happy.png",
-    "char_angry": ASSETS_DIR / "char_angry.png",
-    "char_shy": ASSETS_DIR / "char_shy.png",
+    "char_happy":  ASSETS_DIR / "char_happy.png",
+    "char_angry":  ASSETS_DIR / "char_angry.png",
+    "char_shy":    ASSETS_DIR / "char_shy.png",
 }
+
+_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 def _file_to_data_uri(path: Path) -> Optional[str]:
     if not path.exists():
         return None
-    # 根据后缀猜测 mime（这里只用 png）
-    mime = "image/png"
     b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
+    ext = path.suffix.lower().lstrip(".")
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else "image/png"
     return f"data:{mime};base64,{b64}"
 
 
-def inject_css(bg_data_uri: Optional[str]) -> None:
+# ──────────────────────────────────────────────
+# CSS / 全局样式注入
+# ──────────────────────────────────────────────
+
+def inject_game_css(bg_data_uri: Optional[str]) -> None:
+    bg_img = f"url('{bg_data_uri}')" if bg_data_uri else "none"
+
     st.markdown(
-        """
+        f"""
 <style>
-/* 隐藏 Streamlit 默认 UI */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
+/* ── 隐藏 Streamlit 默认 Chrome ── */
+#MainMenu, footer, header {{ visibility: hidden; }}
+[data-testid="stDecoration"],
+[data-testid="stToolbar"] {{ display: none !important; }}
 
-/* 全屏背景层 */
-.p2g-bg {
+/* ── 全屏背景（直接注入 body/stApp，最可靠）── */
+html, body, .stApp {{
+  background-image: {bg_img} !important;
+  background-size: cover !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  background-attachment: fixed !important;
+}}
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main,
+.main .block-container {{
+  background: transparent !important;
+  padding-top: 0.5rem !important;
+  max-width: 100% !important;
+}}
+/* Streamlit 暗色主题防止覆盖背景 */
+[data-testid="stAppViewContainer"] {{
+  background-color: transparent !important;
+}}
+
+/* ── 章节进度条（顶部细线）── */
+.p2g-progress-wrap {{
+  position: fixed; top: 0; left: 0; right: 0; height: 4px;
+  background: rgba(255,255,255,0.08); z-index: 200;
+}}
+.p2g-progress-fill {{
+  height: 100%;
+  background: linear-gradient(90deg, #7b4fff 0%, #e066ff 100%);
+  transition: width 0.55s ease;
+  border-radius: 0 2px 2px 0;
+  box-shadow: 0 0 12px rgba(160,80,255,0.6);
+}}
+
+/* ── 章节徽章（左上）── */
+.p2g-section-badge {{
+  position: fixed; top: 10px; left: 16px;
+  background: rgba(8,6,18,0.72); backdrop-filter: blur(10px);
+  border: 1px solid rgba(130,90,230,0.35); border-radius: 20px;
+  padding: 0.22rem 0.9rem;
+  color: rgba(195,170,255,0.85);
+  font-size: 0.75rem; letter-spacing: 1.5px; z-index: 150;
+}}
+
+/* ── Debug 徽章（右上，极小）── */
+.p2g-debug-badge {{
+  position: fixed; top: 10px; right: 14px;
+  font-size: 0.65rem; color: rgba(255,255,255,0.22);
+  z-index: 150; pointer-events: none;
+}}
+
+/* ── 角色立绘（右下，对话框上方）── */
+.p2g-char {{
   position: fixed;
-  inset: 0;
-  z-index: 0;
-  background: #111;
-  background-image: var(--p2g-bg);
-  background-size: cover;
-  background-position: center;
-  filter: saturate(1.05);
-}
+  right: 2vw; bottom: 180px;
+  width: min(28vw, 380px);
+  z-index: 40; pointer-events: none; user-select: none;
+  filter: drop-shadow(0 24px 36px rgba(0,0,0,0.65));
+  transition: opacity 0.35s ease;
+}}
 
-/* 角色立绘：右下角 */
-.p2g-char {
-  position: fixed;
-  right: 2.0rem;
-  bottom: 8.2rem; /* 留出对话框高度 */
-  width: min(32vw, 420px);
-  z-index: 2;
-  pointer-events: none;
-  user-select: none;
-  filter: drop-shadow(0 18px 28px rgba(0,0,0,0.55));
-}
+/* ── 说话人名牌（对话框上方）── */
+.p2g-nameplate {{
+  position: fixed; left: 4vw; bottom: 176px;
+  background: linear-gradient(135deg,
+    rgba(100,55,200,0.92) 0%, rgba(58,28,135,0.92) 100%);
+  color: #fff; font-weight: 800; font-size: 0.92rem;
+  padding: 0.25rem 1.5rem 0.25rem 0.85rem;
+  border-radius: 8px 8px 0 0; z-index: 35;
+  letter-spacing: 2.5px;
+  clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%);
+  box-shadow: 0 -4px 20px rgba(100,55,200,0.35);
+}}
 
-/* 对话框：底部固定 */
-.p2g-dialogue {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 1.3rem;
-  width: min(980px, 92vw);
-  z-index: 3;
-  padding: 1.05rem 1.2rem;
-  border-radius: 18px;
-  background: rgba(0,0,0,0.55);
-  border: 1px solid rgba(255,255,255,0.14);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 18px 40px rgba(0,0,0,0.35);
-  color: rgba(255,255,255,0.92);
-  font-family: ui-monospace, "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
-}
-.p2g-speaker {
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  margin-bottom: 0.35rem;
-  color: rgba(255,255,255,0.96);
-}
-.p2g-text {
-  font-size: 1.02rem;
-  line-height: 1.55;
-  white-space: pre-wrap;
-}
-.p2g-hint {
-  margin-top: 0.55rem;
-  font-size: 0.92rem;
-  color: rgba(255,255,255,0.7);
-}
+/* ── 对话框（固定底部，全宽）── */
+.p2g-dialogue {{
+  position: fixed; left: 0; right: 0; bottom: 0;
+  min-height: 172px; z-index: 30;
+  padding: 1.1rem 46% 1.3rem 4.5vw;
+  background: rgba(8,5,20,0.85);
+  border-top: 2px solid rgba(120,75,220,0.55);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 -8px 48px rgba(0,0,0,0.55);
+}}
+.p2g-text {{
+  color: rgba(252,248,255,0.96);
+  font-family: "Yu Gothic UI", "Noto Sans CJK SC",
+               "PingFang SC", system-ui, sans-serif;
+  font-size: 1.04rem; line-height: 1.82; white-space: pre-wrap;
+}}
+.p2g-feedback {{
+  margin-top: 0.5rem;
+  font-size: 0.9rem; font-weight: 600;
+  color: rgba(200,180,255,0.8);
+}}
+.p2g-feedback.correct {{ color: #7bffaa; }}
+.p2g-feedback.wrong   {{ color: #ff8080; }}
+.p2g-next-arrow {{
+  position: absolute; right: 2.2rem; bottom: 1.1rem;
+  color: rgba(160,120,255,0.75); font-size: 1.05rem; font-weight: 700;
+  animation: p2g-bounce 1.3s ease infinite;
+}}
+@keyframes p2g-bounce {{
+  0%, 100% {{ transform: translateY(0);   opacity: 0.75; }}
+  50%       {{ transform: translateY(4px); opacity: 1;    }}
+}}
 
-/* 让主内容区透明，避免遮挡背景 */
-[data-testid="stAppViewContainer"] > .main {
-  background: transparent;
-}
-[data-testid="stAppViewContainer"] {
-  background: transparent;
-}
+/* ── 章节标题卡（sub_head 专用，居中弹出）── */
+.p2g-chapter-card {{
+  position: fixed; left: 50%; top: 40%;
+  transform: translate(-50%, -50%);
+  background: rgba(7,5,18,0.91); backdrop-filter: blur(18px);
+  border: 1px solid rgba(140,95,255,0.6); border-radius: 18px;
+  padding: 2rem 4rem; text-align: center; z-index: 45;
+  box-shadow: 0 0 70px rgba(100,55,200,0.35);
+  min-width: min(520px, 82vw);
+}}
+.p2g-chapter-label {{
+  font-size: 0.7rem; letter-spacing: 5px;
+  color: rgba(175,145,255,0.6); text-transform: uppercase;
+  margin-bottom: 0.55rem;
+}}
+.p2g-chapter-title {{
+  color: #ead8ff; font-size: 1.45rem; font-weight: 700;
+  letter-spacing: 2px;
+  text-shadow: 0 0 24px rgba(180,120,255,0.45);
+}}
 
-/* 按钮组更像“选项” */
-div.stButton > button {
-  border-radius: 14px;
-  padding: 0.6rem 0.95rem;
-  border: 1px solid rgba(255,255,255,0.18);
-  background: rgba(20,20,20,0.35);
-  color: rgba(255,255,255,0.92);
-}
-div.stButton > button:hover {
-  border-color: rgba(255,255,255,0.32);
-  background: rgba(20,20,20,0.5);
-}
+/* ── 选项面板标题 ── */
+.p2g-options-label {{
+  text-align: center;
+  color: rgba(195,170,255,0.7);
+  font-size: 0.75rem; letter-spacing: 4px;
+  text-transform: uppercase; margin-bottom: 0.35rem;
+}}
+
+/* ── 选项按钮（覆盖 Streamlit 默认）── */
+div[data-testid="stButton"] > button {{
+  width: 100%; text-align: left;
+  padding: 0.78rem 1.3rem;
+  border-radius: 10px;
+  border: 1px solid rgba(120,80,220,0.42);
+  background: rgba(10,7,22,0.78);
+  color: rgba(238,228,255,0.94);
+  font-size: 0.97rem;
+  backdrop-filter: blur(10px);
+  transition: all 0.18s ease;
+  letter-spacing: 0.3px;
+}}
+div[data-testid="stButton"] > button:hover {{
+  border-color: rgba(160,115,255,0.9);
+  background: rgba(65,32,140,0.62);
+  color: #fff;
+  transform: translateX(6px);
+  box-shadow: 0 4px 20px rgba(100,55,200,0.32);
+}}
+div[data-testid="stButton"] > button:active {{
+  transform: translateX(2px) scale(0.98);
+}}
+
+/* ── 小型功能按钮（退出/回封面）── */
+.p2g-util-row div[data-testid="stButton"] > button {{
+  text-align: center; padding: 0.35rem 0.8rem;
+  font-size: 0.78rem; letter-spacing: 1px;
+  background: rgba(8,5,18,0.55);
+  border-color: rgba(130,90,230,0.25);
+  color: rgba(190,165,255,0.65);
+  transform: none !important;
+  box-shadow: none !important;
+}}
+.p2g-util-row div[data-testid="stButton"] > button:hover {{
+  border-color: rgba(160,120,255,0.55);
+  color: rgba(220,200,255,0.85);
+  background: rgba(50,25,100,0.45);
+  transform: none !important;
+}}
 </style>
         """,
         unsafe_allow_html=True,
     )
 
-    bg_css = f'url("{bg_data_uri}")' if bg_data_uri else "none"
-    st.markdown(
-        f"""
-<div class="p2g-bg" style="--p2g-bg: {bg_css};"></div>
-        """,
-        unsafe_allow_html=True,
-    )
 
+# ──────────────────────────────────────────────
+# 状态初始化
+# ──────────────────────────────────────────────
 
 def init_state() -> None:
     if "state" not in st.session_state:
         st.session_state.state = "SETUP"
 
-    st.session_state.setdefault("chunks", [])  # List[PdfChunk]
-    st.session_state.setdefault("chunk_idx", 0)
-
-    st.session_state.setdefault("script_items", [])  # List[Dict[str, Any]]
-    st.session_state.setdefault("script_idx", 0)
-
-    st.session_state.setdefault("current_feedback", None)  # str|None
-    st.session_state.setdefault("answered", False)
-
+    st.session_state.setdefault("chunks",          [])
+    st.session_state.setdefault("chunk_idx",       0)
+    st.session_state.setdefault("script_items",    [])
+    st.session_state.setdefault("script_idx",      0)
+    st.session_state.setdefault("current_feedback", None)
+    st.session_state.setdefault("answered",        False)
     st.session_state.setdefault("generator_ready", False)
-    st.session_state.setdefault("use_mineru", True)
+    st.session_state.setdefault("use_mineru",      True)
+    st.session_state.setdefault("parser_used",     "pypdf")
 
 
 def ensure_assets_notice() -> None:
     missing = []
     if not ASSET_BG.exists():
         missing.append(str(ASSET_BG))
-    for k, p in ASSET_CHAR.items():
+    for p in ASSET_CHAR.values():
         if not p.exists():
             missing.append(str(p))
-
     if missing:
         st.warning(
-            "检测到缺少本地图片资源（不会使用网图 URL）。请手动把图片放到以下路径：\n\n- "
+            "检测到以下本地图片资源缺失，请手动放入（代码只读本地路径，不使用网图）：\n\n- "
             + "\n- ".join(missing)
         )
 
@@ -181,9 +277,6 @@ def get_current_item() -> Optional[Dict[str, Any]]:
 
 
 def load_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> None:
-    """
-    生成某个 chunk 的脚本，并重置播放指针。
-    """
     gen = ScriptGenerator()
     chunk = chunks[chunk_idx]
     script = gen.generate_script(
@@ -191,21 +284,28 @@ def load_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> None:
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
     )
-
-    st.session_state.script_items = script
-    st.session_state.script_idx = 0
+    st.session_state.script_items    = script
+    st.session_state.script_idx      = 0
     st.session_state.current_feedback = None
-    st.session_state.answered = False
+    st.session_state.answered        = False
     st.session_state.generator_ready = True
 
 
+def _reset_session() -> None:
+    st.session_state.state            = "SETUP"
+    st.session_state.chunks           = []
+    st.session_state.chunk_idx        = 0
+    st.session_state.script_items     = []
+    st.session_state.script_idx       = 0
+    st.session_state.current_feedback = None
+    st.session_state.answered         = False
+    st.session_state.generator_ready  = False
+
+
 def advance() -> None:
-    """
-    前进到下一条脚本；若当前 chunk 播放结束，则生成下一个 chunk 的脚本。
-    """
     items: List[Dict[str, Any]] = st.session_state.script_items
     st.session_state.current_feedback = None
-    st.session_state.answered = False
+    st.session_state.answered         = False
 
     if not items:
         return
@@ -213,257 +313,362 @@ def advance() -> None:
     st.session_state.script_idx += 1
 
     if st.session_state.script_idx >= len(items):
-        # chunk 结束 -> 下一个 chunk
         chunks: List[PdfChunk] = st.session_state.chunks
         st.session_state.chunk_idx += 1
         if st.session_state.chunk_idx >= len(chunks):
-            # 全部结束
             st.session_state.script_items = [
                 {
-                    "type": "dialogue",
+                    "type":    "dialogue",
                     "speaker": "奈奈",
-                    "text": "呼……总算读完了！笨蛋主人，能坚持到最后还算有点出息喵。",
+                    "text":    "呼……总算读完了！笨蛋主人，能坚持到最后还算有点出息喵。",
                     "emotion": "char_happy",
                 }
             ]
             st.session_state.script_idx = 0
             return
-
-        # 生成下一个 chunk
         st.session_state.generator_ready = False
         st.session_state.state = "PROCESSING"
         st.rerun()
 
 
-def render_game_layer(item: Optional[Dict[str, Any]]) -> None:
-    bg_uri = _file_to_data_uri(ASSET_BG)
-    inject_css(bg_uri)
+# ──────────────────────────────────────────────
+# 游戏画面渲染（固定层：进度条 / 章节标记 /
+#              立绘 / 名牌 / 对话框）
+# ──────────────────────────────────────────────
 
-    ensure_assets_notice()
+def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
+    inject_game_css(_file_to_data_uri(ASSET_BG))
 
-    # 角色立绘
+    chunks:    List[PdfChunk] = st.session_state.chunks
+    chunk_idx: int            = st.session_state.chunk_idx
+    total = len(chunks)
+
+    # ─ 进度条 ─
+    pct = int((chunk_idx / max(total - 1, 1)) * 100) if total > 1 else 100
+    progress_html = f"""
+<div class="p2g-progress-wrap">
+  <div class="p2g-progress-fill" style="width:{pct}%"></div>
+</div>"""
+
+    # ─ 章节徽章 ─
+    section_title = ""
+    if chunks and 0 <= chunk_idx < total:
+        section_title = getattr(chunks[chunk_idx], "section_title", "") or ""
+    badge_html = (
+        f'<div class="p2g-section-badge">📖 {section_title}</div>'
+        if section_title else ""
+    )
+
+    # ─ Debug 徽章 ─
+    p = st.session_state.get("parser_used") or "pypdf"
+    debug_html = f'<div class="p2g-debug-badge">[debug] {p.upper()}</div>'
+
+    # ─ 立绘 ─
     emotion_key = "char_normal"
     if item and item.get("emotion"):
-        emotion_key = str(item.get("emotion"))
+        emotion_key = str(item["emotion"])
     char_path = ASSET_CHAR.get(emotion_key, ASSET_CHAR["char_normal"])
-    char_uri = _file_to_data_uri(char_path)
-    if char_uri:
-        st.markdown(
-            f'<img class="p2g-char" src="{char_uri}" />',
-            unsafe_allow_html=True,
-        )
+    char_uri  = _file_to_data_uri(char_path)
+    char_html = f'<img class="p2g-char" src="{char_uri}" />' if char_uri else ""
 
-    # 对话框内容
-    speaker = "奈奈"
-    text = "喵……（空）"
-    hint = "点击“下一步”继续。"
+    # ─ 内容区（对话框 / 名牌 / 章节标题卡）─
+    t = (item or {}).get("type") or "dialogue"
+    feedback = st.session_state.current_feedback or ""
 
-    if not item:
-        text = "还没有脚本内容……你可以回到封面重新上传 PDF。"
+    if t == "sub_head":
+        title = (item or {}).get("title") or ""
+        chapter_html = f"""
+<div class="p2g-chapter-card">
+  <div class="p2g-chapter-label">Chapter</div>
+  <div class="p2g-chapter-title">{title}</div>
+</div>"""
+        nameplate_html = '<div class="p2g-nameplate">奈奈</div>'
+        dialogue_html  = f"""
+<div class="p2g-dialogue">
+  <div class="p2g-text">～ {title} ～</div>
+  <div class="p2g-next-arrow">▼</div>
+</div>"""
     else:
-        t = item.get("type")
-        if t == "sub_head":
-            speaker = "奈奈"
-            text = f"【小节】{item.get('title') or ''}"
-            hint = "点击“下一步”继续。"
+        chapter_html = ""
+        if not item:
+            speaker, text = "奈奈", "还没有脚本内容……"
         elif t == "dialogue":
             speaker = str(item.get("speaker") or "奈奈")
-            text = str(item.get("text") or "")
-            hint = "点击“下一步”继续。"
+            text    = str(item.get("text")    or "")
         elif t == "quiz":
             speaker = "奈奈"
-            text = str(item.get("question") or "来做个小测验喵！")
-            hint = "先选择一个选项。"
+            text    = str(item.get("question") or "来做个小测验喵！")
         elif t == "choice":
             speaker = "奈奈"
-            text = str(item.get("prompt") or "你选哪个？")
-            hint = "先选择一个选项。"
+            text    = str(item.get("prompt") or "你选哪个？")
         else:
             speaker = "奈奈"
-            text = str(item.get("text") or json.dumps(item, ensure_ascii=False))
-            hint = "点击“下一步”继续。"
+            text    = str(item.get("text") or json.dumps(item, ensure_ascii=False))
 
-    feedback = st.session_state.current_feedback
-    if feedback:
-        hint = feedback
+        # 反馈气泡
+        if feedback and t == "quiz":
+            correct_fb = str((item or {}).get("feedback_correct") or "")
+            fb_cls     = "correct" if feedback == correct_fb else "wrong"
+            fb_html    = f'<div class="p2g-feedback {fb_cls}">{feedback}</div>'
+        elif feedback:
+            fb_html = f'<div class="p2g-feedback">{feedback}</div>'
+        else:
+            fb_html = ""
+
+        # ▼ 继续箭头：对话 & 答完题后显示
+        show_arrow = t == "dialogue" or t == "sub_head" or bool(feedback)
+        arrow_html = '<div class="p2g-next-arrow">▼</div>' if show_arrow else ""
+
+        nameplate_html = f'<div class="p2g-nameplate">{speaker}</div>'
+        dialogue_html  = f"""
+<div class="p2g-dialogue">
+  <div class="p2g-text">{text}</div>
+  {fb_html}
+  {arrow_html}
+</div>"""
 
     st.markdown(
-        f"""
-<div class="p2g-dialogue">
-  <div class="p2g-speaker">{speaker}</div>
-  <div class="p2g-text">{text}</div>
-  <div class="p2g-hint">{hint}</div>
-</div>
-        """,
+        "".join([
+            progress_html, badge_html, debug_html,
+            char_html, chapter_html,
+            nameplate_html, dialogue_html,
+        ]),
         unsafe_allow_html=True,
     )
 
 
-def render_interaction(item: Optional[Dict[str, Any]]) -> None:
-    """
-    渲染 quiz/choice 的按钮组与“下一步”。
-    注意：按钮必须在普通 Streamlit 流里，不能只放 HTML。
-    """
-    st.markdown("<div style='height: 68vh;'></div>", unsafe_allow_html=True)
+# ──────────────────────────────────────────────
+# 交互层（Streamlit 组件，必须在 HTML 流里）
+# ──────────────────────────────────────────────
 
-    cols = st.columns([1, 1, 1])
-    with cols[1]:
-        if item and item.get("type") in {"quiz", "choice"}:
-            opts = item.get("options") or []
-            if isinstance(opts, list) and opts:
-                st.markdown("### 选项")
+def render_interaction(item: Optional[Dict[str, Any]]) -> None:
+    t = (item or {}).get("type") or "dialogue"
+    is_qa = t in {"quiz", "choice"}
+
+    # ── 顶部工具栏（退出按钮，极小）──
+    _, util_col = st.columns([9, 1])
+    with util_col:
+        st.markdown('<div class="p2g-util-row">', unsafe_allow_html=True)
+        if st.button("✕ 退出", key="btn_exit"):
+            _reset_session()
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── 正文区 ──
+    if is_qa and not st.session_state.answered:
+        # 选项在视口中央，不会被底部对话框覆盖
+        st.markdown("<div style='height:16vh'></div>", unsafe_allow_html=True)
+
+        opts = (item or {}).get("options") or []
+        if isinstance(opts, list) and opts:
+            _, mid, _ = st.columns([1, 2.2, 1])
+            with mid:
+                st.markdown(
+                    '<div class="p2g-options-label">— 请选择 —</div>',
+                    unsafe_allow_html=True,
+                )
                 for i, opt in enumerate(opts):
-                    label = str(opt)
-                    if st.button(label, key=f"opt_{st.session_state.chunk_idx}_{st.session_state.script_idx}_{i}"):
-                        if item.get("type") == "quiz":
-                            correct = str(item.get("correct_answer") or "").strip()
+                    label    = str(opt)
+                    btn_key  = f"opt_{st.session_state.chunk_idx}_{st.session_state.script_idx}_{i}"
+                    btn_text = f"{_ALPHA[i] if i < len(_ALPHA) else i+1}. {label}"
+                    if st.button(btn_text, key=btn_key, use_container_width=True):
+                        if t == "quiz":
+                            correct = str((item or {}).get("correct_answer") or "").strip()
                             if label == correct:
                                 st.session_state.current_feedback = str(
-                                    item.get("feedback_correct") or "不错嘛。"
+                                    (item or {}).get("feedback_correct") or "不错嘛。"
                                 )
                             else:
                                 st.session_state.current_feedback = str(
-                                    item.get("feedback_wrong") or "不对喵！再想想。"
+                                    (item or {}).get("feedback_wrong") or "不对喵！再想想。"
                                 )
                         else:
                             st.session_state.current_feedback = f"你选择了：{label}"
                         st.session_state.answered = True
+                        st.rerun()
 
-            st.markdown("---")
+    else:
+        # 对话 / sub_head / 已答题 → 留出空间后显示"继续"按钮
+        # 空间 = 视口高 - 对话框高(~18vh) - 按钮高(~5vh) - 顶部工具栏(~4vh)
+        st.markdown("<div style='height:66vh'></div>", unsafe_allow_html=True)
 
-        # 下一步：quiz/choice 必须先作答才允许前进；sub_head/dialogue 可直接下一步
         can_next = True
-        if item and item.get("type") in {"quiz", "choice"}:
-            can_next = bool(st.session_state.answered)
+        if is_qa and not st.session_state.answered:
+            can_next = False
 
-        if st.button("下一步 ▶", disabled=not can_next, use_container_width=True):
-            advance()
+        _, nc, _ = st.columns([4, 1, 1])
+        with nc:
+            if st.button(
+                "继续 ▶",
+                key=f"next_{st.session_state.chunk_idx}_{st.session_state.script_idx}",
+                disabled=not can_next,
+                use_container_width=True,
+            ):
+                advance()
+                st.rerun()
 
-        if st.button("回到封面（重新上传）", use_container_width=True):
-            st.session_state.state = "SETUP"
-            st.session_state.chunks = []
-            st.session_state.chunk_idx = 0
-            st.session_state.script_items = []
-            st.session_state.script_idx = 0
-            st.session_state.current_feedback = None
-            st.session_state.answered = False
-            st.session_state.generator_ready = False
-            st.rerun()
 
+# ──────────────────────────────────────────────
+# Streamlit 主流程
+# ──────────────────────────────────────────────
 
 def main() -> None:
-    st.set_page_config(page_title="Paper2Galgame", page_icon="📄", layout="wide")
+    st.set_page_config(
+        page_title="Paper2Galgame",
+        page_icon="📖",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     init_state()
 
+    # ════════════════════════════
+    # STATE: SETUP
+    # ════════════════════════════
     if st.session_state.state == "SETUP":
-        st.title("Paper2Galgame")
-        st.caption("把学术论文变成猫娘陪读的视觉小说（剧本化，而不是纯摘要）。")
-
+        # 封面注入背景（无图时只用黑底）
+        inject_game_css(_file_to_data_uri(ASSET_BG))
         ensure_assets_notice()
 
-        st.markdown("#### 上传 PDF")
-        uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
-        mineru_ready = token_available()
-        default_use_mineru = bool(st.session_state.use_mineru) and mineru_ready
-        st.session_state.use_mineru = st.checkbox(
-            "Use MinerU OCR for scanned PDFs (requires MINERU_API_TOKEN)",
-            value=default_use_mineru,
-            disabled=not mineru_ready,
-        )
-        if not mineru_ready:
-            st.caption("Tip: set MINERU_API_TOKEN to enable OCR parsing.")
-
-        st.markdown("---")
         st.markdown(
             """
-**提示：**
-- 需要先配置 `OPENAI_API_KEY`（OpenAI 或 DeepSeek OpenAI 兼容接口）。
-- 立绘/背景必须放在本地 `assets/` 目录（见 `README.md`）。
-            """.strip()
+<style>
+.setup-card {
+  background: rgba(8,5,20,0.82); backdrop-filter: blur(18px);
+  border: 1px solid rgba(130,90,230,0.4); border-radius: 18px;
+  padding: 2.2rem 2.5rem; max-width: 540px; margin: 8vh auto 0;
+}
+.setup-title {
+  font-size: 2.1rem; font-weight: 800; letter-spacing: 3px;
+  background: linear-gradient(135deg, #c084ff, #7b4fff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-bottom: 0.2rem;
+}
+.setup-subtitle {
+  font-size: 0.85rem; color: rgba(190,165,255,0.65);
+  letter-spacing: 1.5px; margin-bottom: 1.6rem;
+}
+</style>
+<div class="setup-card">
+  <div class="setup-title">Paper2Galgame</div>
+  <div class="setup-subtitle">把论文变成猫娘陪读视觉小说</div>
+</div>
+            """,
+            unsafe_allow_html=True,
         )
 
+        with st.container():
+            st.markdown("<div style='max-width:540px; margin:0 auto; padding:0 1rem'>", unsafe_allow_html=True)
+
+            uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
+
+            mineru_ready = token_available()
+            default_use_mineru = bool(st.session_state.use_mineru) and mineru_ready
+            st.session_state.use_mineru = st.checkbox(
+                "🔬 使用 MinerU OCR 解析（按章节，需要 MINERU_API_TOKEN）",
+                value=default_use_mineru,
+                disabled=not mineru_ready,
+            )
+            if not mineru_ready:
+                st.caption("💡 设置 MINERU_API_TOKEN 可启用按章节解析。")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
         if uploaded is not None:
-            # 保存到临时文件，交给 PyPDFLoader
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
                 f.write(uploaded.read())
                 tmp_path = Path(f.name)
-
             st.session_state._tmp_pdf_path = str(tmp_path)  # type: ignore[attr-defined]
             st.session_state.state = "PROCESSING"
             st.rerun()
 
+    # ════════════════════════════
+    # STATE: PROCESSING
+    # ════════════════════════════
     if st.session_state.state == "PROCESSING":
-        st.title("正在把论文拆成剧本……")
-        st.caption("别急喵！我、我才不是为了你才努力的！")
+        inject_game_css(_file_to_data_uri(ASSET_BG))
 
-        ensure_assets_notice()
+        st.markdown(
+            """
+<div style="position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);
+  background:rgba(8,5,20,0.85);backdrop-filter:blur(14px);
+  border:1px solid rgba(130,90,230,0.4);border-radius:16px;
+  padding:2rem 3rem;text-align:center;z-index:60;min-width:320px">
+  <div style="font-size:1.5rem;margin-bottom:0.6rem">⚙️</div>
+  <div style="color:rgba(220,200,255,0.9);font-size:1rem;letter-spacing:1px">
+    正在生成剧本……
+  </div>
+  <div style="color:rgba(175,150,255,0.55);font-size:0.78rem;margin-top:0.4rem">
+    别急喵！我才不是为你努力的！
+  </div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        # 两种情况：
-        # 1) 首次上传：chunks 为空 -> 解析 PDF
-        # 2) 播放到下一 chunk：chunks 已存在 -> 仅为当前 chunk_idx 生成脚本
         if not st.session_state.chunks:
             pdf_path = Path(getattr(st.session_state, "_tmp_pdf_path", ""))
             if not pdf_path.exists():
                 st.error("临时 PDF 文件丢失了，请回到封面重新上传。")
                 if st.button("回到封面"):
-                    st.session_state.state = "SETUP"
+                    _reset_session()
                     st.rerun()
                 return
 
-            with st.spinner("解析 PDF 并切分 chunk..."):
-                chunks = load_and_chunk_pdf(
-                    pdf_path,
-                    use_mineru=bool(st.session_state.use_mineru),
-                )
-                if not chunks:
-                    st.error("没有解析到任何文本。可能是扫描版图片 PDF。可尝试配置 MINERU_API_TOKEN 并启用 OCR。")
+            with st.spinner("解析 PDF…"):
+                try:
+                    chunks = load_and_chunk_pdf(
+                        pdf_path,
+                        use_mineru=bool(st.session_state.use_mineru),
+                    )
+                except Exception as e:
+                    st.error(f"PDF 解析失败：{e}")
                     if st.button("回到封面"):
-                        st.session_state.state = "SETUP"
+                        _reset_session()
                         st.rerun()
                     return
 
-                st.session_state.chunks = chunks
-                st.session_state.chunk_idx = 0
+            if not chunks:
+                st.error("没有解析到任何文本。可能是扫描版 PDF，请启用 MinerU OCR。")
+                if st.button("回到封面"):
+                    _reset_session()
+                    st.rerun()
+                return
+
+            st.session_state.chunks    = chunks
+            st.session_state.chunk_idx = 0
+            parser_used = chunks[0].parser if chunks else "pypdf"
+            st.session_state.parser_used = parser_used
 
         idx = int(st.session_state.chunk_idx)
         idx = max(0, min(idx, len(st.session_state.chunks) - 1))
         st.session_state.chunk_idx = idx
 
-        with st.spinner(f"生成剧本（chunk #{idx}）..."):
+        with st.spinner(f"生成第 {idx + 1} 段剧本…"):
             try:
                 load_script_for_chunk(st.session_state.chunks, idx)
             except Exception as e:
                 st.error(str(e))
-                st.info("请配置好环境变量后再试（见 README.md）。")
+                st.info("请检查 .env 中的 API Key 配置。")
                 if st.button("回到封面"):
-                    st.session_state.state = "SETUP"
-                    st.session_state.chunks = []
-                    st.session_state.chunk_idx = 0
-                    st.session_state.script_items = []
-                    st.session_state.script_idx = 0
-                    st.session_state.current_feedback = None
-                    st.session_state.answered = False
-                    st.session_state.generator_ready = False
+                    _reset_session()
                     st.rerun()
                 return
 
         st.session_state.state = "GAME_LOOP"
         st.rerun()
 
+    # ════════════════════════════
+    # STATE: GAME_LOOP
+    # ════════════════════════════
     if st.session_state.state == "GAME_LOOP":
-        # 若前一个“advance”触发了 PROCESSING，这里不会进来
-        item = get_current_item()
-
-        # 如果 chunk 切换后进入 PROCESSING，再生成脚本
         if not st.session_state.generator_ready:
             st.session_state.state = "PROCESSING"
             st.rerun()
 
-        render_game_layer(item)
+        item = get_current_item()
+        render_game_screen(item)
         render_interaction(item)
 
 
 if __name__ == "__main__":
-    # 建议使用：streamlit run app.py
     main()
-

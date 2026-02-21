@@ -170,7 +170,9 @@ def run_headless(
     export: List[Dict[str, Any]] = []
 
     _print_divider("Paper2Galgame 无头模式（终端）")
+    parser_used = getattr(chunks[0], "parser", "pypdf") if chunks else "pypdf"
     print(f"PDF：{pdf_path}")
+    print(f"解析方式：[debug] {parser_used.upper()}（{'按章节' if parser_used == 'mineru' else '按页/字符分块'}）")
     print(f"chunks：{len(chunks)}（chunk_size={chunk_size}, overlap={chunk_overlap}）")
     print(f"交互：{'是' if interactive else '否'}（auto_strategy={auto_strategy}）")
 
