@@ -190,6 +190,29 @@ html, body, .stApp {{
 }}
 
 /* ── 选项按钮（覆盖 Streamlit 默认）── */
+div[data-testid="stButton"] {{
+  position: relative;
+  z-index: 180;
+}}
+.p2g-util-row,
+.p2g-next-row {{
+  position: relative;
+  z-index: 181;
+}}
+.p2g-util-row {{
+  position: fixed;
+  top: 10px;
+  right: 16px;
+  width: 92px;
+  z-index: 220;
+}}
+.p2g-next-row {{
+  position: fixed;
+  right: clamp(220px, 31vw, 430px);
+  bottom: 188px;
+  width: min(220px, 34vw);
+  z-index: 220;
+}}
 div[data-testid="stButton"] > button {{
   width: 100%; text-align: left;
   padding: 0.78rem 1.3rem;
@@ -229,6 +252,114 @@ div[data-testid="stButton"] > button:active {{
   background: rgba(50,25,100,0.45);
   transform: none !important;
 }}
+.p2g-next-row div[data-testid="stButton"] > button {{
+  text-align: center;
+  font-weight: 700;
+}}
+
+/* ── 按按钮 key 精准定位（Streamlit 组件不会被 markdown 的 div 真正包裹）── */
+.st-key-btn_exit {{
+  position: fixed;
+  top: 10px;
+  right: 16px;
+  width: 92px;
+  z-index: 240;
+  margin: 0 !important;
+}}
+.st-key-btn_continue {{
+  position: fixed;
+  right: clamp(230px, 31vw, 430px); /* 放在立绘左侧 */
+  bottom: 188px; /* 位于对话框上方 */
+  width: 92px;
+  z-index: 240;
+  margin: 0 !important;
+}}
+.st-key-btn_exit div[data-testid="stButton"],
+.st-key-btn_continue div[data-testid="stButton"] {{
+  margin: 0 !important;
+}}
+.st-key-btn_exit div[data-testid="stButton"] > button,
+.st-key-btn_continue div[data-testid="stButton"] > button {{
+  width: 92px !important;
+  min-width: 92px !important;
+  text-align: center !important;
+  padding: 0.42rem 0.4rem !important;
+  font-size: 0.78rem !important;
+  letter-spacing: 1px !important;
+  transform: none !important;
+  box-shadow: none !important;
+}}
+.st-key-btn_exit div[data-testid="stButton"] > button:hover,
+.st-key-btn_continue div[data-testid="stButton"] > button:hover {{
+  transform: none !important;
+}}
+
+/* ── 小屏适配：缩小立绘，减少遮挡按钮 ── */
+@media (max-width: 900px) {{
+  .p2g-char {{
+    width: min(32vw, 250px);
+    right: 0.8rem;
+    bottom: 172px;
+  }}
+  .p2g-dialogue {{
+    padding-right: 42%;
+  }}
+  .p2g-next-row {{
+    right: clamp(160px, 28vw, 280px);
+    bottom: 182px;
+    width: min(180px, 36vw);
+  }}
+  .st-key-btn_continue {{
+    right: clamp(170px, 28vw, 300px);
+    bottom: 182px;
+  }}
+}}
+@media (max-width: 640px) {{
+  .p2g-char {{
+    width: min(40vw, 180px);
+    right: 0.35rem;
+    bottom: 160px;
+    opacity: 0.95;
+  }}
+  .p2g-nameplate {{
+    bottom: 156px;
+  }}
+  .p2g-dialogue {{
+    min-height: 156px;
+    padding: 0.9rem 42% 1rem 4vw;
+  }}
+  .p2g-util-row {{
+    top: 8px;
+    right: 10px;
+    width: 84px;
+  }}
+  .p2g-next-row {{
+    right: 116px;
+    bottom: 168px;
+    width: min(132px, 34vw);
+  }}
+  .p2g-next-row div[data-testid="stButton"] > button {{
+    padding: 0.58rem 0.5rem;
+    font-size: 0.88rem;
+  }}
+  .st-key-btn_exit {{
+    top: 8px;
+    right: 10px;
+    width: 84px;
+  }}
+  .st-key-btn_continue {{
+    right: 112px;
+    bottom: 168px;
+    width: 84px;
+  }}
+  .st-key-btn_exit div[data-testid="stButton"] > button,
+  .st-key-btn_continue div[data-testid="stButton"] > button {{
+    width: 84px !important;
+    min-width: 84px !important;
+    padding: 0.38rem 0.3rem !important;
+    font-size: 0.74rem !important;
+  }}
+}}
 </style>
         """,
         unsafe_allow_html=True,
@@ -241,7 +372,7 @@ div[data-testid="stButton"] > button:active {{
 
 def init_state() -> None:
     if "state" not in st.session_state:
-        st.session_state.state = "SETUP"
+        st.session_state.state = "LANDING"
 
     st.session_state.setdefault("chunks",          [])
     st.session_state.setdefault("chunk_idx",       0)
@@ -292,7 +423,7 @@ def load_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> None:
 
 
 def _reset_session() -> None:
-    st.session_state.state            = "SETUP"
+    st.session_state.state            = "LANDING"
     st.session_state.chunks           = []
     st.session_state.chunk_idx        = 0
     st.session_state.script_items     = []
@@ -446,13 +577,9 @@ def render_interaction(item: Optional[Dict[str, Any]]) -> None:
     is_qa = t in {"quiz", "choice"}
 
     # ── 顶部工具栏（退出按钮，极小）──
-    _, util_col = st.columns([9, 1])
-    with util_col:
-        st.markdown('<div class="p2g-util-row">', unsafe_allow_html=True)
-        if st.button("✕ 退出", key="btn_exit"):
-            _reset_session()
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    if st.button("✕ 退出", key="btn_exit"):
+        _reset_session()
+        st.rerun()
 
     # ── 正文区 ──
     if is_qa and not st.session_state.answered:
@@ -488,29 +615,174 @@ def render_interaction(item: Optional[Dict[str, Any]]) -> None:
                         st.rerun()
 
     else:
-        # 对话 / sub_head / 已答题 → 留出空间后显示"继续"按钮
-        # 空间 = 视口高 - 对话框高(~18vh) - 按钮高(~5vh) - 顶部工具栏(~4vh)
-        st.markdown("<div style='height:66vh'></div>", unsafe_allow_html=True)
+        # 继续按钮改为 fixed 定位，避免被立绘挤出视口
+        st.markdown("<div style='height:2vh'></div>", unsafe_allow_html=True)
 
         can_next = True
         if is_qa and not st.session_state.answered:
             can_next = False
 
-        _, nc, _ = st.columns([4, 1, 1])
-        with nc:
-            if st.button(
-                "继续 ▶",
-                key=f"next_{st.session_state.chunk_idx}_{st.session_state.script_idx}",
-                disabled=not can_next,
-                use_container_width=True,
-            ):
-                advance()
-                st.rerun()
+        if st.button(
+            "继续 ▶",
+            key="btn_continue",
+            disabled=not can_next,
+            use_container_width=False,
+        ):
+            advance()
+            st.rerun()
 
 
 # ──────────────────────────────────────────────
 # Streamlit 主流程
 # ──────────────────────────────────────────────
+
+def render_landing_page() -> None:
+    inject_game_css(_file_to_data_uri(ASSET_BG))
+    ensure_assets_notice()
+
+    st.markdown(
+        """
+<style>
+.p2g-landing-card {
+  background: rgba(8,5,20,0.82);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(130,90,230,0.4);
+  border-radius: 18px;
+  padding: 2.2rem 2.3rem 1.6rem;
+  max-width: 620px;
+  margin: 11vh auto 0;
+  box-shadow: 0 16px 60px rgba(0,0,0,0.35);
+}
+.p2g-landing-title {
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: 3px;
+  background: linear-gradient(135deg, #d6b0ff, #7b4fff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.35rem;
+}
+.p2g-landing-sub {
+  color: rgba(212,194,255,0.78);
+  font-size: 0.95rem;
+  line-height: 1.8;
+}
+.p2g-landing-note {
+  color: rgba(188,165,245,0.62);
+  font-size: 0.82rem;
+  margin-top: 0.6rem;
+  letter-spacing: 0.5px;
+}
+.st-key-btn_start_game {
+  max-width: 620px;
+  margin: 0.9rem auto 0 !important;
+}
+.st-key-btn_start_game div[data-testid="stButton"] > button {
+  height: 48px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: 1px;
+}
+</style>
+<div class="p2g-landing-card">
+  <div class="p2g-landing-title">Paper2Galgame</div>
+  <div class="p2g-landing-sub">
+    把论文变成可互动的 Galgame 伴读体验。上传 PDF 后，系统会解析内容，并生成对话、提问和选择题。
+  </div>
+  <div class="p2g-landing-note">
+    建议先准备好 API Key（OpenAI / DeepSeek）和角色素材图片，再开始体验。
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("开始游戏", key="btn_start_game", use_container_width=True):
+        st.session_state.state = "GUIDE"
+        st.rerun()
+
+
+def render_guide_page() -> None:
+    inject_game_css(_file_to_data_uri(ASSET_BG))
+    ensure_assets_notice()
+
+    st.markdown(
+        """
+<style>
+.p2g-guide-card {
+  background: rgba(8,5,20,0.84);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(130,90,230,0.42);
+  border-radius: 18px;
+  padding: 2rem 2.2rem;
+  max-width: 720px;
+  margin: 8vh auto 0;
+  box-shadow: 0 16px 60px rgba(0,0,0,0.35);
+}
+.p2g-guide-title {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #f1e4ff;
+  letter-spacing: 2px;
+  margin-bottom: 0.35rem;
+}
+.p2g-guide-sub {
+  color: rgba(190,165,255,0.72);
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+.p2g-guide-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: rgba(240,233,255,0.95);
+  line-height: 1.95;
+  font-size: 1rem;
+}
+.p2g-guide-list li { margin-bottom: 0.35rem; }
+.p2g-guide-tip {
+  margin-top: 0.9rem;
+  color: rgba(205,186,255,0.78);
+  font-size: 0.9rem;
+  line-height: 1.75;
+  border-top: 1px dashed rgba(150,120,230,0.25);
+  padding-top: 0.8rem;
+}
+.st-key-btn_go_setup, .st-key-btn_back_landing {
+  margin-top: 0.5rem !important;
+}
+.st-key-btn_go_setup div[data-testid="stButton"] > button,
+.st-key-btn_back_landing div[data-testid="stButton"] > button {
+  text-align: center;
+  font-weight: 700;
+}
+</style>
+<div class="p2g-guide-card">
+  <div class="p2g-guide-title">操作说明</div>
+  <div class="p2g-guide-sub">开始前先看一遍，体验会顺很多。</div>
+  <ol class="p2g-guide-list">
+    <li>上传论文 PDF（优先选择可复制文字的 PDF；扫描版建议开启 MinerU OCR）。</li>
+    <li>等待系统解析并生成剧情脚本，系统会自动切分论文内容并生成互动问题。</li>
+    <li>按照游戏提示阅读内容、回答题目或做选择，再点击“继续”推进剧情。</li>
+    <li>如果解析失败或内容为空，请检查 API Key、PDF 格式，或切换 OCR 选项后重试。</li>
+  </ol>
+  <div class="p2g-guide-tip">
+    基本流程：<b>1. 上传论文，2. 按照游戏提示回答题目</b>。<br/>
+    你可以随时点击“退出”返回首页重新开始。
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _, mid, _ = st.columns([1, 1.4, 1])
+    with mid:
+        if st.button("前往上传论文", key="btn_go_setup", use_container_width=True):
+            st.session_state.state = "SETUP"
+            st.rerun()
+        if st.button("返回首页", key="btn_back_landing", use_container_width=True):
+            st.session_state.state = "LANDING"
+            st.rerun()
+
 
 def main() -> None:
     st.set_page_config(
@@ -520,6 +792,12 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
     init_state()
+
+    if st.session_state.state == "LANDING":
+        render_landing_page()
+
+    if st.session_state.state == "GUIDE":
+        render_guide_page()
 
     # ════════════════════════════
     # STATE: SETUP
@@ -558,6 +836,10 @@ def main() -> None:
 
         with st.container():
             st.markdown("<div style='max-width:540px; margin:0 auto; padding:0 1rem'>", unsafe_allow_html=True)
+
+            if st.button("返回说明页", key="btn_back_guide", use_container_width=True):
+                st.session_state.state = "GUIDE"
+                st.rerun()
 
             uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
 

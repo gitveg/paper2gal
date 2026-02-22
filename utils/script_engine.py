@@ -228,8 +228,8 @@ class ScriptGenerator:
                 opts = it.get("options")
                 if not (q and isinstance(opts, list) and len(opts) >= 2):
                     continue
-                opts2 = [str(o) for o in opts]
-                correct = str(it.get("correct_answer") or opts2[0]).strip()
+                opts2 = [self._normalize_option_text(o) for o in opts]
+                correct = self._normalize_correct_answer(it.get("correct_answer"), opts2)
                 out.append(
                     {
                         "type": "quiz",
@@ -251,7 +251,7 @@ class ScriptGenerator:
                     {
                         "type": "choice",
                         "prompt": prompt,
-                        "options": [str(o) for o in opts],
+                        "options": [self._normalize_option_text(o) for o in opts],
                         "emotion": self._clamp_emotion(it.get("emotion")),
                     }
                 )
@@ -263,6 +263,59 @@ class ScriptGenerator:
                 chunk_index=-1,
             )
         return out
+
+    def _normalize_option_text(self, value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        # 清洗 AI 可能附带的选项前缀：A. / B) / (C) / 1. / （2） 等
+        for _ in range(3):
+            prev = text
+            text = re.sub(r"^\s*[（(]\s*(?:[A-Za-z]|\d{1,2})\s*[）)]\s*", "", text).strip()
+            text = re.sub(r"^\s*(?:[A-Za-z]|\d{1,2})\s*[\.\)、,:：]\s*", "", text).strip()
+            if text == prev:
+                break
+        return text or str(value).strip()
+
+    def _normalize_correct_answer(self, raw_answer: Any, options: List[str]) -> str:
+        if not options:
+            return str(raw_answer or "").strip()
+
+        raw = str(raw_answer or "").strip()
+        if not raw:
+            return options[0]
+
+        # 兼容 AI 仅返回 A/B/C 或 1/2/3 的情况
+        idx = self._option_label_to_index(raw)
+        if idx is not None and 0 <= idx < len(options):
+            return options[idx]
+
+        cleaned = self._normalize_option_text(raw)
+        idx = self._option_label_to_index(cleaned)
+        if idx is not None and 0 <= idx < len(options):
+            return options[idx]
+
+        for opt in options:
+            if cleaned == str(opt).strip():
+                return opt
+
+        return cleaned or options[0]
+
+    def _option_label_to_index(self, text: str) -> Optional[int]:
+        s = str(text or "").strip()
+        if not s:
+            return None
+
+        m = re.fullmatch(r"[（(]?\s*([A-Za-z])\s*[）)]?[\.\)、,:：]?\s*", s)
+        if m:
+            return ord(m.group(1).upper()) - ord("A")
+
+        m = re.fullmatch(r"[（(]?\s*(\d{1,2})\s*[）)]?[\.\)、,:：]?\s*", s)
+        if m:
+            return int(m.group(1)) - 1
+
+        return None
 
     def _clamp_emotion(self, emotion: Any) -> str:
         e = str(emotion or "char_normal").strip()
