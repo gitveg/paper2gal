@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from utils.pdf_loader import load_and_chunk_pdf, PdfChunk
 from utils.mineru_parser import token_available
@@ -132,10 +133,10 @@ html, body, .stApp {{
 /* ── 角色立绘（右下，对话框上方）── */
 .p2g-char {{
   position: fixed;
-  right: 2vw; bottom: 180px;
-  width: min(28vw, 380px);
+  right: 1vw; bottom: 180px;
+  width: min(42vw, 570px);
   z-index: 40; pointer-events: none; user-select: none;
-  filter: drop-shadow(0 24px 36px rgba(0,0,0,0.65));
+  filter: drop-shadow(0 28px 42px rgba(0,0,0,0.65));
   transition: opacity 0.35s ease;
 }}
 
@@ -156,11 +157,14 @@ html, body, .stApp {{
 .p2g-dialogue {{
   position: fixed; left: 0; right: 0; bottom: 0;
   min-height: 172px; z-index: 30;
-  padding: 1.1rem 46% 1.3rem 4.5vw;
+  /* 右 padding 动态跟随立绘宽度，避免宽屏文字过早换行 */
+  padding: 1.1rem calc(min(42vw, 570px) + 1vw + 3rem) 1.3rem 4.5vw;
   background: rgba(8,5,20,0.85);
   border-top: 2px solid rgba(120,75,220,0.55);
   backdrop-filter: blur(16px);
   box-shadow: 0 -8px 48px rgba(0,0,0,0.55);
+  cursor: pointer;
+  user-select: none;
 }}
 .p2g-text {{
   color: rgba(252,248,255,0.96);
@@ -175,6 +179,20 @@ html, body, .stApp {{
 }}
 .p2g-feedback.correct {{ color: #7bffaa; }}
 .p2g-feedback.wrong   {{ color: #ff8080; }}
+.p2g-explanation {{
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.85rem;
+  background: rgba(110,70,200,0.13);
+  border-left: 3px solid rgba(140,100,255,0.5);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.88rem; line-height: 1.72;
+  color: rgba(220,205,255,0.88);
+}}
+.p2g-explanation-label {{
+  font-size: 0.68rem; letter-spacing: 2.5px;
+  color: rgba(175,145,255,0.6);
+  margin-bottom: 0.2rem; display: block;
+}}
 .p2g-next-arrow {{
   position: absolute; right: 2.2rem; bottom: 1.1rem;
   color: rgba(160,120,255,0.75); font-size: 1.05rem; font-weight: 700;
@@ -322,12 +340,12 @@ div[data-testid="stButton"] > button:active {{
 /* ── 小屏适配：缩小立绘，减少遮挡按钮 ── */
 @media (max-width: 900px) {{
   .p2g-char {{
-    width: min(32vw, 250px);
-    right: 0.8rem;
+    width: min(38vw, 340px);
+    right: 0.5rem;
     bottom: 172px;
   }}
   .p2g-dialogue {{
-    padding-right: 42%;
+    padding-right: 44%;
   }}
   .p2g-next-row {{
     right: clamp(160px, 28vw, 280px);
@@ -341,7 +359,7 @@ div[data-testid="stButton"] > button:active {{
 }}
 @media (max-width: 640px) {{
   .p2g-char {{
-    width: min(40vw, 180px);
+    width: min(42vw, 240px);
     right: 0.35rem;
     bottom: 160px;
     opacity: 0.95;
@@ -721,11 +739,29 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
             speaker = "奈奈"
             text    = str(item.get("text") or json.dumps(item, ensure_ascii=False))
 
-        # 反馈气泡
+        # 反馈气泡 + 解析（quiz 区分对错颜色；choice 统一中性色）
         if feedback and t == "quiz":
             correct_fb = str((item or {}).get("feedback_correct") or "")
             fb_cls     = "correct" if feedback == correct_fb else "wrong"
             fb_html    = f'<div class="p2g-feedback {fb_cls}">{feedback}</div>'
+            explanation = str((item or {}).get("explanation") or "").strip()
+            if explanation:
+                fb_html += (
+                    f'<div class="p2g-explanation">'
+                    f'<span class="p2g-explanation-label">📖 解析</span>'
+                    f'{explanation}'
+                    f'</div>'
+                )
+        elif feedback and t == "choice":
+            fb_html = f'<div class="p2g-feedback">{feedback}</div>'
+            explanation = str((item or {}).get("explanation") or "").strip()
+            if explanation:
+                fb_html += (
+                    f'<div class="p2g-explanation">'
+                    f'<span class="p2g-explanation-label">💭 奈奈的想法</span>'
+                    f'{explanation}'
+                    f'</div>'
+                )
         elif feedback:
             fb_html = f'<div class="p2g-feedback">{feedback}</div>'
         else:
@@ -815,6 +851,46 @@ def render_interaction(item: Optional[Dict[str, Any]]) -> None:
         ):
             advance()
             st.rerun()
+
+    # ── 点击对话框 = 点击"继续"按钮（JS 注入）──
+    # 仅在可以继续时激活，避免未答题时误触发
+    _can_click_dialogue = not (is_qa and not st.session_state.answered)
+    if _can_click_dialogue:
+        components.html(
+            """
+<script>
+(function () {
+  var par = window.parent;
+  if (!par) return;
+
+  // 防止 Streamlit 每次 rerender 重复绑定
+  if (par._p2g_click_handler) {
+    par.document.removeEventListener('click', par._p2g_click_handler, true);
+  }
+
+  par._p2g_click_handler = function (e) {
+    var dlg = par.document.querySelector('.p2g-dialogue');
+    if (!dlg) return;
+    // 点击目标必须在对话框内部
+    if (!dlg.contains(e.target)) return;
+
+    // 找到"继续"按钮（非禁用状态）
+    var btns = par.document.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      if (b.textContent.trim().startsWith('\u7ee7\u7eed') && !b.disabled) {
+        b.click();
+        return;
+      }
+    }
+  };
+
+  par.document.addEventListener('click', par._p2g_click_handler, true);
+})();
+</script>
+            """,
+            height=0,
+        )
 
 
 # ──────────────────────────────────────────────

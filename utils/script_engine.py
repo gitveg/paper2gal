@@ -11,28 +11,28 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from utils.config import load_config
 
 try:
-    # langchain-openai
     from langchain_openai import ChatOpenAI
 except Exception as e:  # pragma: no cover
     ChatOpenAI = None  # type: ignore
 
 
 SYSTEM_PROMPT = """
-你是一个傲娇但学识渊博的二次元猫娘“奈奈”。你的任务是陪用户读论文。
-输入是论文的**一整节**（例如 Abstract、Introduction、或 3 Method）。你需要把它改编成一段“对话剧本”。
+你是一个傲娇但学识渊博的二次元猫娘"奈奈"。你的任务是陪用户读论文。
+输入是论文的**一整节**（例如 Abstract、Introduction、或 3 Method）。你需要把它改编成一段"对话剧本"。
 
 要求：
-1. **去学术化**：用口语、比喻来解释复杂的概念（比如把“神经网络”比作“连接起来的猫脑”）。
-2. **情绪价值**：不要只讲课。要穿插吐槽（比如“这个作者写的句子好长啊喵！”）、撒娇或严厉。
-3. **互动设计**：在关键知识点，设计一个“选项”让用户选，或者设计一个“小测验”。
+1. **去学术化**：用口语、比喻来解释复杂的概念（比如把"神经网络"比作"连接起来的猫脑"）。
+2. **情绪价值**：不要只讲课。要穿插吐槽（比如"这个作者写的句子好长啊喵！"）、撒娇或严厉。
+3. **互动设计**：在关键知识点，设计一个"选项"让用户选，或者设计一个"小测验"。
 4. **层次划分**：若本节内容较多（如 Method、Related Work），请**按层次划分子节**。在子节开头插入一条 type="sub_head"，且带 "title" 字段（子节标题，如 "3.1 概述"）。子节内再写 dialogue/quiz/choice。这样用户能分层次理解，每层可含多个对话和题目。
-5. **格式严格**：输出为 JSON 列表。type 只能是 dialogue / quiz / choice / sub_head。sub_head 项只需 type 与 title；其余项同前（speaker, text, emotion, type；quiz 需 question/options/correct_answer/feedback_*；choice 需 prompt/options/emotion）。
+5. **解析**：quiz 和 choice 都必须附上 "explanation" 字段（50~120 字）。quiz 的解析解释为什么正确答案是对的；choice 的解析则针对用户的选择，给出思考角度或拓展观点，帮助加深理解。无论哪种，都要口语化，可以吐槽，有奈奈的风格。
+6. **格式严格**：输出为 JSON 列表。type 只能是 dialogue / quiz / choice / sub_head。sub_head 项只需 type 与 title；dialogue 需 speaker/text/emotion/type；quiz 需 question/options/correct_answer/feedback_correct/feedback_wrong/explanation；choice 需 prompt/options/emotion/explanation。
 """.strip()
 
 
 @dataclass
 class ScriptItem:
-    type: str  # dialogue / quiz / choice
+    type: str  # dialogue / quiz / choice / sub_head
     speaker: Optional[str] = None
     text: Optional[str] = None
     emotion: Optional[str] = None
@@ -43,6 +43,7 @@ class ScriptItem:
     correct_answer: Optional[str] = None
     feedback_correct: Optional[str] = None
     feedback_wrong: Optional[str] = None
+    explanation: Optional[str] = None  # 答题解析，无论对错都展示
 
     # choice（非测验选择）
     prompt: Optional[str] = None
@@ -50,7 +51,7 @@ class ScriptItem:
 
 class ScriptGenerator:
     """
-    把论文 chunk 转换为“视觉小说脚本”（JSON 列表）。
+    把论文 chunk 转换为"视觉小说脚本"（JSON 列表）。
 
     说明：
     - 使用 OpenAI 兼容接口（OpenAI / DeepSeek 等）
@@ -72,7 +73,6 @@ class ScriptGenerator:
 
         cfg = load_config()
 
-        # 允许调用方参数覆盖配置文件（比如 UI 里做高级设置）
         self.model = model or cfg.llm.model
         self.temperature = temperature if temperature is not None else cfg.llm.temperature
         self.max_retries = max_retries if max_retries is not None else cfg.llm.max_retries
@@ -81,7 +81,6 @@ class ScriptGenerator:
         api_key = cfg.llm.api_key
         base_url = cfg.llm.base_url
 
-        # 兼容不同版本参数命名（base_url / openai_api_base）
         kwargs: Dict[str, Any] = {
             "model": self.model,
             "temperature": self.temperature,
@@ -89,11 +88,9 @@ class ScriptGenerator:
             "timeout": self.request_timeout,
         }
         if base_url:
-            # 新版本叫 base_url；旧版本可能叫 openai_api_base
             kwargs["base_url"] = base_url
             kwargs["openai_api_base"] = base_url
 
-        # 说明：部分版本不支持同时传两个 key，会报错；这里做一次降级
         try:
             self.llm = ChatOpenAI(**kwargs)
         except TypeError:
@@ -139,7 +136,6 @@ class ScriptGenerator:
                 last_err = e
                 continue
 
-        # 最后兜底：保证 UI 不崩
         msg = (
             "唔……这段作者写得太绕了，我一时没把剧本整理成标准格式。"
             "我们先用简化版继续读下去喵！"
@@ -167,17 +163,15 @@ class ScriptGenerator:
 - sub_head 项：仅需 type="sub_head" 与 title="子节标题"（用于长节按层次划分）
 - emotion 只能在以下 key 里选一个：char_normal, char_happy, char_angry, char_shy
 - dialogue 项必须包含 speaker,text,emotion,type
-- quiz 项必须包含：type="quiz", question, options(数组), correct_answer, feedback_correct, feedback_wrong
-- choice 项必须包含：type="choice", prompt, options(数组), emotion
+- quiz 项必须包含：type="quiz", question, options(数组), correct_answer, feedback_correct, feedback_wrong, explanation(解析，50~120字，解释为什么正确答案是对的)
+- choice 项必须包含：type="choice", prompt, options(数组), emotion, explanation(解析，50~120字，针对这道思考题给出奈奈的观点或思路拓展)
 
 若本节内容较多，请用 sub_head 划分子节，再在子节内写 dialogue/quiz/choice。请把解释写进对话文本里，而不是 JSON 外面。
 """.strip()
 
     def _parse_json_list(self, raw: str) -> List[Any]:
-        # 去掉可能的 ```json ... ``` 包裹
         cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.strip(), flags=re.I | re.M)
 
-        # 直接尝试
         try:
             data = json.loads(cleaned)
             if isinstance(data, list):
@@ -185,7 +179,6 @@ class ScriptGenerator:
         except Exception:
             pass
 
-        # 抽取第一个 JSON 数组
         m = re.search(r"\[[\s\S]*\]", cleaned)
         if m:
             data = json.loads(m.group(0))
@@ -230,6 +223,7 @@ class ScriptGenerator:
                     continue
                 opts2 = [self._normalize_option_text(o) for o in opts]
                 correct = self._normalize_correct_answer(it.get("correct_answer"), opts2)
+                explanation = str(it.get("explanation") or "").strip()
                 out.append(
                     {
                         "type": "quiz",
@@ -238,6 +232,7 @@ class ScriptGenerator:
                         "correct_answer": correct,
                         "feedback_correct": str(it.get("feedback_correct") or "嗯哼，还行吧。").strip(),
                         "feedback_wrong": str(it.get("feedback_wrong") or "笨蛋！再想想喵！").strip(),
+                        "explanation": explanation,
                         "emotion": self._clamp_emotion(it.get("emotion")),
                     }
                 )
@@ -247,16 +242,17 @@ class ScriptGenerator:
                 opts = it.get("options")
                 if not (isinstance(opts, list) and len(opts) >= 2):
                     continue
+                explanation = str(it.get("explanation") or "").strip()
                 out.append(
                     {
                         "type": "choice",
                         "prompt": prompt,
                         "options": [self._normalize_option_text(o) for o in opts],
                         "emotion": self._clamp_emotion(it.get("emotion")),
+                        "explanation": explanation,
                     }
                 )
 
-        # 防止整段被过滤空
         if not out:
             return self._fallback_script(
                 "这段写得太硬核了……我先用最普通的方式给你捋一遍喵。",
@@ -269,7 +265,6 @@ class ScriptGenerator:
         if not text:
             return ""
 
-        # 清洗 AI 可能附带的选项前缀：A. / B) / (C) / 1. / （2） 等
         for _ in range(3):
             prev = text
             text = re.sub(r"^\s*[（(]\s*(?:[A-Za-z]|\d{1,2})\s*[）)]\s*", "", text).strip()
@@ -286,7 +281,6 @@ class ScriptGenerator:
         if not raw:
             return options[0]
 
-        # 兼容 AI 仅返回 A/B/C 或 1/2/3 的情况
         idx = self._option_label_to_index(raw)
         if idx is not None and 0 <= idx < len(options):
             return options[idx]
@@ -333,4 +327,3 @@ class ScriptGenerator:
                 "emotion": "char_shy" if chunk_index % 2 else "char_normal",
             }
         ]
-
