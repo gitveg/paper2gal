@@ -1,42 +1,105 @@
-## Paper2Galgame
+# 📖 Paper2Galgame
 
-把用户上传的 PDF 学术论文，“剧本化”为一款二次元猫娘伴读的视觉小说（Streamlit 应用）。
+> 把学术论文变成猫娘陪读的视觉小说。
 
-### 你需要准备的本地资源（必须手动放入）
-请在项目根目录创建 `assets/` 文件夹，并放入以下图片文件（文件名必须完全一致，代码里会按本地路径读取）：
+上传一篇 PDF，AI 猫娘「奈奈」会把论文**按章节剧本化**——不是摘要，是真正的角色对白、吐槽、小测验和选择题。基于 Streamlit 构建，支持 UI 模式与命令行无头模式。
 
-- `assets/bg_classroom.png`（默认教室背景）
-- `assets/char_normal.png`
-- `assets/char_happy.png`
-- `assets/char_angry.png`
-- `assets/char_shy.png`
+---
 
-> 注意：本项目**不会**使用任何网图 URL；所有图片都从本地路径读取。
+## 目录结构
 
-### 安装与运行
+```
+paper2gal/
+├── app.py               # Streamlit UI 主程序
+├── headless.py          # 命令行无头模式
+├── utils/
+│   ├── config.py        # 配置加载（读取 .env）
+│   ├── script_engine.py # LLM 剧本生成引擎
+│   ├── pdf_loader.py    # PDF 解析与章节切分
+│   ├── mineru_parser.py # MinerU OCR API 客户端
+│   └── .env             # 敏感配置（自行创建，不提交）
+├── assets/              # 本地图片资源（见下方说明）
+├── papers/              # 示例论文存放目录
+├── output/              # MinerU 解析缓存
+├── requirements.txt
+└── environment.yml
+```
+
+---
+
+## 快速开始
+
+### 1. 创建环境
 
 ```bash
 conda env create -f environment.yml
 conda activate paper2gal
-pip install -r requirements.txt
 ```
 
-在项目根目录创建 `.env`，配置 LLM 接口（二选一即可）：
+### 2. 配置 API Key
 
-- `OPENAI_API_KEY`（或 `DeepSeek_API_KEY`）+ 可选 `OPENAI_API_BASE` / `DeepSeek_BASE_URL`
-- 剧本生成依赖上述 API，未配置会报错
+在 `utils/.env`（或项目根目录 `.env`）中填写：
 
-### 可选：MinerU OCR（扫描版 PDF）
+```dotenv
+# DeepSeek（推荐）
+DeepSeek_API_KEY=sk-xxxxxxxxxxxxxxxx
+DeepSeek_BASE_URL=https://api.deepseek.com/v1
+DeepSeek_MODEL=deepseek-chat
 
-- 在 `.env` 或系统环境变量中设置 `MINERU_API_TOKEN`（可选 `MINERU_API_BASE`）
-- 默认启用 MinerU（若未配置 token 会自动回退到 pypdf）
-- 如需禁用：headless 模式使用 `--no-mineru`
-- 解析结果默认缓存到 `output/mineru/<pdf_name>/`
+# 或 OpenAI 标准接口
+# OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
+# OPENAI_API_BASE=https://api.openai.com/v1
 
-### 无头模式
+# 可选：MinerU OCR（扫描版 PDF 按章节解析）
+# MINERU_API_TOKEN=your_token_here
+```
+
+> `.env` 加载优先级：`utils/.env` → 项目根目录 `.env` → 当前工作目录 `.env`
+
+### 3. 放入图片资源
+
+将以下图片放入 `assets/` 目录（**文件名必须完全一致**，项目只读本地路径，不使用网图）：
+
+| 文件名 | 说明 |
+|---|---|
+| `bg_classroom.png` | 教室背景 |
+| `char_normal.png` | 奈奈·普通表情 |
+| `char_happy.png` | 奈奈·开心 |
+| `char_angry.png` | 奈奈·生气 |
+| `char_shy.png` | 奈奈·害羞 |
+
+### 4. 运行
+
+**UI 模式**（推荐）：
 
 ```bash
-
-python headless.py --mode interacive/auto
+streamlit run app.py
 ```
+
+**命令行无头模式**：
+
+```bash
+# 交互式（手动选择选项）
+python headless.py --mode interactive
+
+# 自动播放
+python headless.py --mode auto
+
+# 指定 PDF，禁用 MinerU
+python headless.py --mode auto --pdf papers/react.pdf --no-mineru
+```
+
+---
+
+## PDF 解析方式
+
+| 方式 | 触发条件 | 特点 |
+|---|---|---|
+| **MinerU OCR** | 配置了 `MINERU_API_TOKEN` 且未使用 `--no-mineru` | 云端 OCR，**按章节切分**，还原论文结构 |
+| **pypdf** | 未配置 token 或主动禁用 | 本地解析，按字符分块，适合文字版 PDF |
+
+解析结果缓存在 `output/mineru/<pdf_名>/`，重复运行不重复上传。  
+运行时会显示 `[debug] MINERU` 或 `[debug] PYPDF` 标识当前解析方式。
+
+---
 
