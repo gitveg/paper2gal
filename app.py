@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import tempfile
@@ -102,6 +103,30 @@ html, body, .stApp {{
   position: fixed; top: 10px; right: 14px;
   font-size: 0.65rem; color: rgba(255,255,255,0.22);
   z-index: 150; pointer-events: none;
+}}
+.p2g-prefetch-badge {{
+  position: fixed;
+  top: 46px;
+  right: 16px;
+  z-index: 210;
+  pointer-events: none;
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  letter-spacing: 0.4px;
+  background: rgba(8, 6, 18, 0.72);
+  border: 1px solid rgba(130, 90, 230, 0.28);
+  color: rgba(215, 198, 255, 0.88);
+  backdrop-filter: blur(10px);
+}}
+.p2g-prefetch-badge.ready {{
+  border-color: rgba(120, 230, 170, 0.35);
+  color: rgba(190, 255, 226, 0.95);
+}}
+.p2g-prefetch-badge.loading {{
+  border-color: rgba(130, 90, 230, 0.35);
+  color: rgba(215, 198, 255, 0.88);
 }}
 
 /* ── 角色立绘（右下，对话框上方）── */
@@ -347,6 +372,12 @@ div[data-testid="stButton"] > button:active {{
     right: 10px;
     width: 84px;
   }}
+  .p2g-prefetch-badge {{
+    top: 42px;
+    right: 10px;
+    font-size: 0.68rem;
+    padding: 0.2rem 0.55rem;
+  }}
   .st-key-btn_continue {{
     right: 112px;
     bottom: 168px;
@@ -383,6 +414,12 @@ def init_state() -> None:
     st.session_state.setdefault("generator_ready", False)
     st.session_state.setdefault("use_mineru",      True)
     st.session_state.setdefault("parser_used",     "pypdf")
+    st.session_state.setdefault("prefetch_cache",  {})
+    st.session_state.setdefault("prefetch_future", None)
+    st.session_state.setdefault("prefetch_target_idx", None)
+    st.session_state.setdefault("prefetch_task_run_token", None)
+    st.session_state.setdefault("script_run_token", 0)
+    st.session_state.setdefault("prefetch_executor", None)
 
 
 def ensure_assets_notice() -> None:
@@ -407,19 +444,154 @@ def get_current_item() -> Optional[Dict[str, Any]]:
     return None
 
 
-def load_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> None:
+def _get_prefetch_executor() -> ThreadPoolExecutor:
+    executor = st.session_state.get("prefetch_executor")
+    if executor is None:
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="p2g-prefetch")
+        st.session_state.prefetch_executor = executor
+    return executor
+
+
+def _clear_prefetch_buffer(*, bump_run_token: bool = False) -> None:
+    future = st.session_state.get("prefetch_future")
+    if future is not None and not future.done():
+        future.cancel()
+
+    st.session_state.prefetch_cache = {}
+    st.session_state.prefetch_future = None
+    st.session_state.prefetch_target_idx = None
+    st.session_state.prefetch_task_run_token = None
+
+    if bump_run_token:
+        st.session_state.script_run_token = int(st.session_state.get("script_run_token", 0)) + 1
+
+
+def _apply_script_items(script: List[Dict[str, Any]]) -> None:
+    st.session_state.script_items     = script
+    st.session_state.script_idx       = 0
+    st.session_state.current_feedback = None
+    st.session_state.answered         = False
+    st.session_state.generator_ready  = True
+
+
+def _generate_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> List[Dict[str, Any]]:
     gen = ScriptGenerator()
     chunk = chunks[chunk_idx]
-    script = gen.generate_script(
+    return gen.generate_script(
         chunk.text,
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
     )
-    st.session_state.script_items    = script
-    st.session_state.script_idx      = 0
-    st.session_state.current_feedback = None
-    st.session_state.answered        = False
-    st.session_state.generator_ready = True
+
+
+def _generate_script_payload(
+    chunk_text: str,
+    *,
+    chunk_index: int,
+    section_title: Optional[str],
+) -> List[Dict[str, Any]]:
+    gen = ScriptGenerator()
+    return gen.generate_script(chunk_text, chunk_index=chunk_index, section_title=section_title)
+
+
+def _collect_prefetch_if_ready() -> None:
+    future = st.session_state.get("prefetch_future")
+    target_idx = st.session_state.get("prefetch_target_idx")
+    task_run_token = st.session_state.get("prefetch_task_run_token")
+    current_run_token = int(st.session_state.get("script_run_token", 0))
+
+    if future is None or target_idx is None:
+        return
+    if not future.done():
+        return
+
+    try:
+        script = future.result()
+    except Exception:
+        script = None
+
+    st.session_state.prefetch_future = None
+    st.session_state.prefetch_target_idx = None
+    st.session_state.prefetch_task_run_token = None
+
+    if script is None:
+        return
+    if int(task_run_token or -1) != current_run_token:
+        return
+
+    cache = dict(st.session_state.get("prefetch_cache") or {})
+    cache[int(target_idx)] = script
+    st.session_state.prefetch_cache = cache
+
+
+def _take_prefetched_script(chunk_idx: int, *, wait_if_running: bool = False) -> Optional[List[Dict[str, Any]]]:
+    _collect_prefetch_if_ready()
+
+    cache = dict(st.session_state.get("prefetch_cache") or {})
+    if chunk_idx in cache:
+        script = cache.pop(chunk_idx)
+        st.session_state.prefetch_cache = cache
+        return script
+
+    future = st.session_state.get("prefetch_future")
+    target_idx = st.session_state.get("prefetch_target_idx")
+    task_run_token = int(st.session_state.get("prefetch_task_run_token") or -1)
+    current_run_token = int(st.session_state.get("script_run_token", 0))
+    if future is None or target_idx != chunk_idx:
+        return None
+    if task_run_token != current_run_token:
+        return None
+    if not wait_if_running and not future.done():
+        return None
+
+    try:
+        script = future.result()
+    except Exception:
+        script = None
+
+    st.session_state.prefetch_future = None
+    st.session_state.prefetch_target_idx = None
+    st.session_state.prefetch_task_run_token = None
+    return script
+
+
+def _ensure_next_chunk_prefetch(chunks: List[PdfChunk], current_chunk_idx: int) -> None:
+    next_idx = int(current_chunk_idx) + 1
+    if next_idx < 0 or next_idx >= len(chunks):
+        return
+
+    _collect_prefetch_if_ready()
+
+    cache = st.session_state.get("prefetch_cache") or {}
+    if next_idx in cache:
+        return
+
+    future = st.session_state.get("prefetch_future")
+    target_idx = st.session_state.get("prefetch_target_idx")
+    task_run_token = int(st.session_state.get("prefetch_task_run_token") or -1)
+    current_run_token = int(st.session_state.get("script_run_token", 0))
+
+    if future is not None:
+        if target_idx == next_idx and task_run_token == current_run_token:
+            return
+        if not future.done():
+            return
+
+    chunk = chunks[next_idx]
+    future = _get_prefetch_executor().submit(
+        _generate_script_payload,
+        chunk.text,
+        chunk_index=chunk.index,
+        section_title=getattr(chunk, "section_title", "") or None,
+    )
+    st.session_state.prefetch_future = future
+    st.session_state.prefetch_target_idx = next_idx
+    st.session_state.prefetch_task_run_token = current_run_token
+
+
+def load_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> None:
+    script = _generate_script_for_chunk(chunks, chunk_idx)
+    _apply_script_items(script)
 
 
 def _reset_session() -> None:
@@ -431,6 +603,7 @@ def _reset_session() -> None:
     st.session_state.current_feedback = None
     st.session_state.answered         = False
     st.session_state.generator_ready  = False
+    _clear_prefetch_buffer(bump_run_token=True)
 
 
 def advance() -> None:
@@ -493,6 +666,18 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
     # ─ Debug 徽章 ─
     p = st.session_state.get("parser_used") or "pypdf"
     debug_html = f'<div class="p2g-debug-badge">[debug] {p.upper()}</div>'
+
+    # ─ 预生成状态徽章（给用户感知下一段是否已准备好）─
+    prefetch_html = ""
+    next_chunk_idx = chunk_idx + 1
+    if 0 <= next_chunk_idx < total:
+        cache = dict(st.session_state.get("prefetch_cache") or {})
+        future = st.session_state.get("prefetch_future")
+        target_idx = st.session_state.get("prefetch_target_idx")
+        if next_chunk_idx in cache:
+            prefetch_html = '<div class="p2g-prefetch-badge ready">下一段已就绪</div>'
+        elif future is not None and target_idx == next_chunk_idx:
+            prefetch_html = '<div class="p2g-prefetch-badge loading">正在预生成下一段...</div>'
 
     # ─ 立绘 ─
     emotion_key = "char_normal"
@@ -560,7 +745,7 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
 
     st.markdown(
         "".join([
-            progress_html, badge_html, debug_html,
+            progress_html, badge_html, debug_html, prefetch_html,
             char_html, chapter_html,
             nameplate_html, dialogue_html,
         ]),
@@ -920,6 +1105,7 @@ def main() -> None:
             st.session_state.chunk_idx = 0
             parser_used = chunks[0].parser if chunks else "pypdf"
             st.session_state.parser_used = parser_used
+            _clear_prefetch_buffer(bump_run_token=True)
 
         idx = int(st.session_state.chunk_idx)
         idx = max(0, min(idx, len(st.session_state.chunks) - 1))
@@ -927,7 +1113,11 @@ def main() -> None:
 
         with st.spinner(f"生成第 {idx + 1} 段剧本…"):
             try:
-                load_script_for_chunk(st.session_state.chunks, idx)
+                prefetched = _take_prefetched_script(idx, wait_if_running=True)
+                if prefetched is not None:
+                    _apply_script_items(prefetched)
+                else:
+                    load_script_for_chunk(st.session_state.chunks, idx)
             except Exception as e:
                 st.error(str(e))
                 st.info("请检查 .env 中的 API Key 配置。")
@@ -936,6 +1126,7 @@ def main() -> None:
                     st.rerun()
                 return
 
+        _ensure_next_chunk_prefetch(st.session_state.chunks, idx)
         st.session_state.state = "GAME_LOOP"
         st.rerun()
 
@@ -946,6 +1137,10 @@ def main() -> None:
         if not st.session_state.generator_ready:
             st.session_state.state = "PROCESSING"
             st.rerun()
+
+        _collect_prefetch_if_ready()
+        if st.session_state.chunks:
+            _ensure_next_chunk_prefetch(st.session_state.chunks, int(st.session_state.chunk_idx))
 
         item = get_current_item()
         render_game_screen(item)
