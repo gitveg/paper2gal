@@ -38,7 +38,11 @@ def _get_token(explicit: Optional[str] = None) -> Optional[str]:
     if explicit is not None:
         token = str(explicit).strip()
         return token or None
-    env_token = os.getenv("MINERU_API_TOKEN") or os.getenv("MINERU_TOKEN")
+    env_token = (
+        os.getenv("MINERU_API_TOKEN")
+        or os.getenv("MINERU_TOKEN")
+        or os.getenv("MINERU_KEY")
+    )
     token = (env_token or "").strip()
     # 去掉 .env 里可能带的首尾引号，避免 401
     if token and len(token) >= 2 and token[0] == token[-1] and token[0] in ('"', "'"):

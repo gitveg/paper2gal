@@ -1,3 +1,4 @@
 .env
+utils/.env
 output/
 __pycache__/

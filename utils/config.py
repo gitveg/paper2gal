@@ -69,7 +69,11 @@ def load_config() -> AppConfig:
     # -----------------------------
     api_key = (
         os.getenv("DeepSeek_API_KEY")
+        or os.getenv("DEEPSEEK_KEY")
         or os.getenv("OPENAI_API_KEY")
+        or os.getenv("OPENAI_KEY")
+        or os.getenv("LLM_API_KEY")
+        or os.getenv("LLM_KEY")
         or ""
     ).strip()
     base_url_raw = (
