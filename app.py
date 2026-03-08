@@ -131,18 +131,22 @@ html, body, .stApp {{
 }}
 
 /* ── 角色立绘（右下，对话框上方）── */
+/* 以高度为主约束：永远不超出对话框上方可用空间；宽度自适应纵横比 */
 .p2g-char {{
   position: fixed;
   right: 1vw; bottom: 180px;
-  width: min(42vw, 570px);
+  height: min(calc(100vh - 210px), 70vh, 680px);
+  width: auto;
+  max-width: min(36vw, 500px);
   z-index: 40; pointer-events: none; user-select: none;
   filter: drop-shadow(0 28px 42px rgba(0,0,0,0.65));
   transition: opacity 0.35s ease;
 }}
 
-/* ── 说话人名牌（对话框上方）── */
+/* ── 说话人名牌（紧贴对话框顶部，随对话框高度自适应）── */
 .p2g-nameplate {{
-  position: fixed; left: 4vw; bottom: 176px;
+  position: fixed; left: 4vw;
+  bottom: calc(var(--p2g-dlg-h, 172px) + 4px);
   background: linear-gradient(135deg,
     rgba(100,55,200,0.92) 0%, rgba(58,28,135,0.92) 100%);
   color: #fff; font-weight: 800; font-size: 0.92rem;
@@ -157,8 +161,8 @@ html, body, .stApp {{
 .p2g-dialogue {{
   position: fixed; left: 0; right: 0; bottom: 0;
   min-height: 172px; z-index: 30;
-  /* 右 padding 动态跟随立绘宽度，避免宽屏文字过早换行 */
-  padding: 1.1rem calc(min(42vw, 570px) + 1vw + 3rem) 1.3rem 4.5vw;
+  /* 右 padding：立绘改为高度控制后，按预期渲染宽度留白 */
+  padding: 1.1rem calc(min(28vw, 400px) + 1vw + 2rem) 1.3rem 4.5vw;
   background: rgba(8,5,20,0.85);
   border-top: 2px solid rgba(120,75,220,0.55);
   backdrop-filter: blur(16px);
@@ -311,8 +315,8 @@ div[data-testid="stButton"] > button:active {{
 }}
 .st-key-btn_continue {{
   position: fixed;
-  right: clamp(230px, 31vw, 430px); /* 放在立绘左侧 */
-  bottom: 188px; /* 位于对话框上方 */
+  right: clamp(230px, 31vw, 430px);
+  bottom: calc(var(--p2g-dlg-h, 172px) + 14px); /* 随对话框高度浮动 */
   width: 92px;
   z-index: 240;
   margin: 0 !important;
@@ -337,39 +341,43 @@ div[data-testid="stButton"] > button:active {{
   transform: none !important;
 }}
 
-/* ── 小屏适配：缩小立绘，减少遮挡按钮 ── */
+/* ── 中等屏幕适配（≤900px）── */
 @media (max-width: 900px) {{
   .p2g-char {{
-    width: min(38vw, 340px);
+    /* 高度约束在小屏同样生效，只需收窄 max-width 防止过宽 */
+    max-width: min(34vw, 320px);
     right: 0.5rem;
     bottom: 172px;
   }}
   .p2g-dialogue {{
-    padding-right: 44%;
+    padding-right: 40%;
   }}
   .p2g-next-row {{
     right: clamp(160px, 28vw, 280px);
-    bottom: 182px;
     width: min(180px, 36vw);
   }}
   .st-key-btn_continue {{
     right: clamp(170px, 28vw, 300px);
-    bottom: 182px;
   }}
 }}
+/* ── 手机端适配（≤640px）── */
 @media (max-width: 640px) {{
   .p2g-char {{
-    width: min(42vw, 240px);
+    /* 手机上立绘缩小，避免遮挡主要内容 */
+    height: min(calc(100vh - 190px), 55vh, 380px);
+    max-width: min(40vw, 220px);
     right: 0.35rem;
     bottom: 160px;
-    opacity: 0.95;
+    opacity: 0.92;
   }}
   .p2g-nameplate {{
-    bottom: 156px;
+    /* 名牌继续跟随 CSS 变量，此处只调字号 */
+    font-size: 0.82rem;
+    padding: 0.2rem 1.1rem 0.2rem 0.75rem;
   }}
   .p2g-dialogue {{
-    min-height: 156px;
-    padding: 0.9rem 42% 1rem 4vw;
+    min-height: 150px;
+    padding: 0.9rem 38% 1rem 4vw;
   }}
   .p2g-util-row {{
     top: 8px;
@@ -377,8 +385,7 @@ div[data-testid="stButton"] > button:active {{
     width: 84px;
   }}
   .p2g-next-row {{
-    right: 116px;
-    bottom: 168px;
+    right: 100px;
     width: min(132px, 34vw);
   }}
   .p2g-next-row div[data-testid="stButton"] > button {{
@@ -397,8 +404,7 @@ div[data-testid="stButton"] > button:active {{
     padding: 0.2rem 0.55rem;
   }}
   .st-key-btn_continue {{
-    right: 112px;
-    bottom: 168px;
+    right: 100px;
     width: 84px;
   }}
   .st-key-btn_exit div[data-testid="stButton"] > button,
@@ -852,45 +858,70 @@ def render_interaction(item: Optional[Dict[str, Any]]) -> None:
             advance()
             st.rerun()
 
-    # ── 点击对话框 = 点击"继续"按钮（JS 注入）──
-    # 仅在可以继续时激活，避免未答题时误触发
+    # ── JS 注入：① 对话框高度 → CSS 变量  ② 点击对话框推进 ──
     _can_click_dialogue = not (is_qa and not st.session_state.answered)
-    if _can_click_dialogue:
-        components.html(
-            """
+    components.html(
+        f"""
 <script>
-(function () {
+(function () {{
   var par = window.parent;
   if (!par) return;
+  var doc = par.document;
 
-  // 防止 Streamlit 每次 rerender 重复绑定
-  if (par._p2g_click_handler) {
-    par.document.removeEventListener('click', par._p2g_click_handler, true);
-  }
+  // ─── ① 实时测量对话框高度，写入 CSS 变量 --p2g-dlg-h ───
+  // 名牌和"继续"按钮的 bottom 都依赖这个变量，确保始终在对话框上方
+  function updateDlgHeight() {{
+    var dlg = doc.querySelector('.p2g-dialogue');
+    if (dlg) {{
+      var h = Math.ceil(dlg.getBoundingClientRect().height);
+      if (h > 0) doc.documentElement.style.setProperty('--p2g-dlg-h', h + 'px');
+    }}
+  }}
+  updateDlgHeight();
+  setTimeout(updateDlgHeight, 150);
+  setTimeout(updateDlgHeight, 600);
 
-  par._p2g_click_handler = function (e) {
-    var dlg = par.document.querySelector('.p2g-dialogue');
-    if (!dlg) return;
-    // 点击目标必须在对话框内部
-    if (!dlg.contains(e.target)) return;
+  // 窗口大小改变时重算（响应竖屏/横屏切换）
+  if (!par._p2g_resize_bound) {{
+    par.addEventListener('resize', updateDlgHeight, {{passive: true}});
+    par._p2g_resize_bound = true;
+  }}
 
-    // 找到"继续"按钮（非禁用状态）
-    var btns = par.document.querySelectorAll('button');
-    for (var i = 0; i < btns.length; i++) {
+  // MutationObserver：对话框内容变化时（如解析展开）立即重算
+  if (par._p2g_dlg_observer) par._p2g_dlg_observer.disconnect();
+  var dlgEl = doc.querySelector('.p2g-dialogue');
+  if (dlgEl) {{
+    par._p2g_dlg_observer = new MutationObserver(function() {{
+      updateDlgHeight();
+    }});
+    par._p2g_dlg_observer.observe(dlgEl, {{childList: true, subtree: true}});
+  }}
+
+  // ─── ② 点击对话框 = 点击"继续"按钮 ───
+  if (par._p2g_click_handler) {{
+    doc.removeEventListener('click', par._p2g_click_handler, true);
+  }}
+
+  var canClick = {'true' if _can_click_dialogue else 'false'};
+  par._p2g_click_handler = function (e) {{
+    if (!canClick) return;
+    var dlg = doc.querySelector('.p2g-dialogue');
+    if (!dlg || !dlg.contains(e.target)) return;
+    var btns = doc.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {{
       var b = btns[i];
-      if (b.textContent.trim().startsWith('\u7ee7\u7eed') && !b.disabled) {
+      if (b.textContent.trim().startsWith('\u7ee7\u7eed') && !b.disabled) {{
         b.click();
         return;
-      }
-    }
-  };
-
-  par.document.addEventListener('click', par._p2g_click_handler, true);
-})();
+      }}
+    }}
+  }};
+  doc.addEventListener('click', par._p2g_click_handler, true);
+}})();
 </script>
-            """,
-            height=0,
-        )
+        """,
+        height=0,
+    )
 
 
 # ──────────────────────────────────────────────
