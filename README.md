@@ -76,6 +76,11 @@ DeepSeek_MODEL=deepseek-chat
 streamlit run app.py
 ```
 
+进入设置页后可选择阅读模式：
+- `极速阅读`：只读摘要、方法、实验，速度最快
+- `重点阅读`：保留约 60% chunk，兼顾速度与覆盖
+- `详细阅读`：完整阅读（默认）
+
 **命令行无头模式**：
 
 ```bash
@@ -84,6 +89,9 @@ python headless.py --mode interactive
 
 # 自动播放
 python headless.py --mode auto
+
+# 自动播放 + 重点阅读
+python headless.py --mode auto --reading-mode focus
 
 # 指定 PDF，禁用 MinerU
 python headless.py --mode auto --pdf papers/react.pdf --no-mineru
@@ -100,6 +108,22 @@ python headless.py --mode auto --pdf papers/react.pdf --no-mineru
 
 解析结果缓存在 `output/mineru/<pdf_名>/`，重复运行不重复上传。  
 运行时会显示 `[debug] MINERU` 或 `[debug] PYPDF` 标识当前解析方式。
+
+---
+
+## 阅读模式（UI / CLI 通用）
+
+`headless.py` 支持参数：
+
+```bash
+python headless.py --reading-mode fast
+python headless.py --reading-mode focus
+python headless.py --reading-mode detailed
+```
+
+- `fast`：强压缩阅读，适合快速过论文
+- `focus`：保留重点内容（目标约 60%）
+- `detailed`：完整模式，兼容旧行为（默认）
 
 ---
 

@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 
 from utils.pdf_loader import load_and_chunk_pdf, PdfChunk
 from utils.mineru_parser import token_available
+from utils.reading_mode import apply_reading_mode
 from utils.script_engine import ScriptGenerator
 
 # ──────────────────────────────────────────────
@@ -30,6 +31,12 @@ ASSET_CHAR = {
 }
 
 _ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+READING_MODE_OPTIONS = ["fast", "focus", "detailed"]
+READING_MODE_LABELS = {
+    "fast": "极速阅读",
+    "focus": "重点阅读",
+    "detailed": "详细阅读",
+}
 
 
 def _file_to_data_uri(path: Path) -> Optional[str]:
@@ -105,9 +112,14 @@ html, body, .stApp {{
   font-size: 0.65rem; color: rgba(255,255,255,0.22);
   z-index: 150; pointer-events: none;
 }}
+.p2g-mode-badge {{
+  position: fixed; top: 28px; right: 14px;
+  font-size: 0.68rem; color: rgba(210, 188, 255, 0.78);
+  z-index: 150; pointer-events: none;
+}}
 .p2g-prefetch-badge {{
   position: fixed;
-  top: 46px;
+  top: 64px;
   right: 16px;
   z-index: 210;
   pointer-events: none;
@@ -437,6 +449,7 @@ def init_state() -> None:
     st.session_state.setdefault("answered",        False)
     st.session_state.setdefault("generator_ready", False)
     st.session_state.setdefault("use_mineru",      True)
+    st.session_state.setdefault("reading_mode",    "detailed")
     st.session_state.setdefault("parser_used",     "pypdf")
     st.session_state.setdefault("prefetch_cache",  {})
     st.session_state.setdefault("prefetch_future", None)
@@ -690,6 +703,9 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
     # ─ Debug 徽章 ─
     p = st.session_state.get("parser_used") or "pypdf"
     debug_html = f'<div class="p2g-debug-badge">[debug] {p.upper()}</div>'
+    mode = str(st.session_state.get("reading_mode") or "detailed").strip().lower()
+    mode_label = READING_MODE_LABELS.get(mode, "详细阅读")
+    mode_html = f'<div class="p2g-mode-badge">模式: {mode_label}</div>'
 
     # ─ 预生成状态徽章（给用户感知下一段是否已准备好）─
     prefetch_html = ""
@@ -787,7 +803,7 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
 
     st.markdown(
         "".join([
-            progress_html, badge_html, debug_html, prefetch_html,
+            progress_html, badge_html, debug_html, mode_html, prefetch_html,
             char_html, chapter_html,
             nameplate_html, dialogue_html,
         ]),
@@ -1133,6 +1149,16 @@ def main() -> None:
                 st.session_state.state = "GUIDE"
                 st.rerun()
 
+            if str(st.session_state.get("reading_mode") or "").strip().lower() not in READING_MODE_OPTIONS:
+                st.session_state.reading_mode = "detailed"
+            st.selectbox(
+                "阅读模式",
+                options=READING_MODE_OPTIONS,
+                key="reading_mode",
+                format_func=lambda x: READING_MODE_LABELS.get(str(x), str(x)),
+                help="极速：只读摘要/方法/实验；重点：保留约60%；详细：完整阅读。",
+            )
+
             uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
 
             mineru_ready = token_available()
@@ -1193,6 +1219,10 @@ def main() -> None:
                     chunks = load_and_chunk_pdf(
                         pdf_path,
                         use_mineru=bool(st.session_state.use_mineru),
+                    )
+                    chunks = apply_reading_mode(
+                        chunks,
+                        reading_mode=str(st.session_state.get("reading_mode") or "detailed"),
                     )
                 except Exception as e:
                     st.error(f"PDF 解析失败：{e}")

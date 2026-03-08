@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from utils.pdf_loader import load_and_chunk_pdf
+from utils.reading_mode import ReadingMode, apply_reading_mode
 from utils.script_engine import ScriptGenerator
 
 
@@ -149,6 +150,7 @@ def run_headless(
     auto_strategy: str,
     export_path: Optional[Path],
     use_mineru: bool,
+    reading_mode: ReadingMode,
 ) -> None:
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF 不存在：{pdf_path}")
@@ -165,6 +167,9 @@ def run_headless(
     if max_chunks is not None:
         chunks = chunks[: max(0, max_chunks)]
 
+    input_chunk_count = len(chunks)
+    chunks = apply_reading_mode(chunks, reading_mode=reading_mode)
+
     gen = ScriptGenerator()
 
     export: List[Dict[str, Any]] = []
@@ -173,6 +178,7 @@ def run_headless(
     parser_used = getattr(chunks[0], "parser", "pypdf") if chunks else "pypdf"
     print(f"PDF：{pdf_path}")
     print(f"解析方式：[debug] {parser_used.upper()}（{'按章节' if parser_used == 'mineru' else '按页/字符分块'}）")
+    print(f"阅读模式：{reading_mode}，chunks：{input_chunk_count} -> {len(chunks)}")
     print(f"chunks：{len(chunks)}（chunk_size={chunk_size}, overlap={chunk_overlap}）")
     print(f"交互：{'是' if interactive else '否'}（auto_strategy={auto_strategy}）")
 
@@ -199,8 +205,14 @@ def run_headless(
     print("读完啦喵。")
 
     if export_path:
+        payload: Dict[str, Any] = {
+            "reading_mode": reading_mode,
+            "input_chunk_count": input_chunk_count,
+            "output_chunk_count": len(chunks),
+            "items": export,
+        }
         export_path.parent.mkdir(parents=True, exist_ok=True)
-        export_path.write_text(json.dumps(export, ensure_ascii=False, indent=2), encoding="utf-8")
+        export_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"已导出脚本：{export_path}")
 
 
@@ -213,6 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-chunks", type=int, default=None, help="限制最多处理多少个 chunk（调试用）")
     p.add_argument("--use-mineru", action="store_true", help="强制使用 MinerU OCR（需要 MINERU_API_TOKEN）")
     p.add_argument("--no-mineru", action="store_true", help="禁用 MinerU OCR（默认启用）")
+    p.add_argument(
+        "--reading-mode",
+        choices=["fast", "focus", "detailed"],
+        default="detailed",
+        help="阅读模式：fast=极速，focus=重点，detailed=详细（默认）",
+    )
 
     p.add_argument(
         "--mode",
@@ -269,6 +287,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             auto_strategy=str(args.auto_strategy),
             export_path=export_path,
             use_mineru=False if bool(args.no_mineru) else True,
+            reading_mode=str(args.reading_mode),
         )
         return 0
     except Exception as e:
