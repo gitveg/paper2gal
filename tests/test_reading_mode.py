@@ -68,7 +68,7 @@ def test_mineru_fast_does_not_include_introduction_even_if_text_mentions_method(
     assert "Abstract" in titles
 
 
-def test_mineru_focus_ratio_and_boundaries() -> None:
+def test_mineru_standard_keeps_full_content() -> None:
     titles = [
         "Cover",
         "Abstract",
@@ -84,15 +84,11 @@ def test_mineru_focus_ratio_and_boundaries() -> None:
         "Appendix",
     ]
     chunks = _mk_mineru_chunks(titles)
-    out = apply_reading_mode(chunks, "focus")
-    out_idx = [c.index for c in out]
-    assert len(out) == 8  # ceil(12 * 0.6)=8
-    assert 0 in out_idx
-    assert 11 in out_idx
-    assert out_idx == sorted(out_idx)
+    out = apply_reading_mode(chunks, "detailed")
+    assert [c.index for c in out] == [c.index for c in chunks]
 
 
-def test_pypdf_fast_and_focus_stable_order() -> None:
+def test_pypdf_fast_and_standard_aliases() -> None:
     texts = [
         "background intro",
         "abstract summary of this paper",
@@ -128,16 +124,17 @@ def test_pypdf_fast_and_focus_stable_order() -> None:
         for c in out_fast
     )
 
-    out_focus = apply_reading_mode(chunks, "focus")
-    focus_idx = [c.index for c in out_focus]
-    assert len(out_focus) == 12  # ceil(20*0.6)=12
-    assert focus_idx == sorted(focus_idx)
+    out_standard = apply_reading_mode(chunks, "standard")
+    assert [c.index for c in out_standard] == [c.index for c in chunks]
+
+    out_focus_compat = apply_reading_mode(chunks, "focus")
+    assert [c.index for c in out_focus_compat] == [c.index for c in chunks]
 
 
 def test_small_paper_thresholds() -> None:
-    small_focus = _mk_pypdf_chunks(["a", "b", "c", "d", "e", "f"])
-    out_focus = apply_reading_mode(small_focus, "focus")
-    assert len(out_focus) == len(small_focus)
+    small_standard = _mk_pypdf_chunks(["a", "b", "c", "d", "e", "f"])
+    out_standard = apply_reading_mode(small_standard, "detailed")
+    assert len(out_standard) == len(small_standard)
 
     small_fast = _mk_pypdf_chunks(["a", "method", "result", "conclusion"])
     out_fast = apply_reading_mode(small_fast, "fast")

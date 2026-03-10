@@ -227,9 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-mineru", action="store_true", help="禁用 MinerU OCR（默认启用）")
     p.add_argument(
         "--reading-mode",
-        choices=["fast", "focus", "detailed"],
+        choices=["fast", "detailed", "standard"],
         default="detailed",
-        help="阅读模式：fast=极速，focus=重点，detailed=详细（默认）",
+        help="阅读模式：fast=极速，detailed/standard=标准详细（默认）",
     )
 
     p.add_argument(

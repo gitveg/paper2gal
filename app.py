@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import json
-import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -31,11 +31,37 @@ ASSET_CHAR = {
 }
 
 _ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-READING_MODE_OPTIONS = ["fast", "focus", "detailed"]
+READING_MODE_OPTIONS = ["fast", "detailed"]
 READING_MODE_LABELS = {
     "fast": "极速阅读",
-    "focus": "重点阅读",
-    "detailed": "详细阅读",
+    "detailed": "标准阅读（详细）",
+}
+COMMON_SECTION_ORDER = [
+    "abstract",
+    "introduction",
+    "related_work",
+    "method",
+    "experiment",
+    "conclusion",
+    "appendix",
+]
+COMMON_SECTION_LABELS = {
+    "abstract": "Abstract / 摘要",
+    "introduction": "Introduction / 引言",
+    "related_work": "Related Work / 相关工作",
+    "method": "Method / 方法",
+    "experiment": "Experiment / 实验与结果",
+    "conclusion": "Conclusion / 结论",
+    "appendix": "Appendix / 附录",
+}
+COMMON_SECTION_KEYWORDS = {
+    "abstract": ["abstract", "摘要"],
+    "introduction": ["introduction", "intro", "引言", "背景"],
+    "related_work": ["related work", "related", "literature", "相关工作"],
+    "method": ["method", "methods", "approach", "framework", "methodology", "方法", "模型", "算法"],
+    "experiment": ["experiment", "experiments", "evaluation", "result", "results", "实验", "评估", "结果"],
+    "conclusion": ["conclusion", "conclusions", "future work", "总结", "结论"],
+    "appendix": ["appendix", "supplementary", "supplement", "附录"],
 }
 
 
@@ -450,6 +476,12 @@ def init_state() -> None:
     st.session_state.setdefault("generator_ready", False)
     st.session_state.setdefault("use_mineru",      True)
     st.session_state.setdefault("reading_mode",    "detailed")
+    st.session_state.setdefault("enable_section_pick", False)
+    st.session_state.setdefault("raw_chunks",      [])
+    st.session_state.setdefault("available_sections", [])
+    st.session_state.setdefault("selected_sections", None)
+    st.session_state.setdefault("section_label_to_key", {})
+    st.session_state.setdefault("section_filter_applied", False)
     st.session_state.setdefault("parser_used",     "pypdf")
     st.session_state.setdefault("prefetch_cache",  {})
     st.session_state.setdefault("prefetch_future", None)
@@ -471,6 +503,40 @@ def ensure_assets_notice() -> None:
             "检测到以下本地图片资源缺失，请手动放入（代码只读本地路径，不使用网图）：\n\n- "
             + "\n- ".join(missing)
         )
+
+
+def _normalize_for_section(text: str) -> str:
+    s = str(text or "").lower()
+    s = re.sub(r"[#`$^*_+~]+", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _infer_common_section_key(title: str, body: str) -> Optional[str]:
+    # Prefer title match; fallback to body prefix to handle OCR-noisy headings.
+    title_norm = _normalize_for_section(title)
+    body_norm = _normalize_for_section(body[:1200])
+    for key in COMMON_SECTION_ORDER:
+        kws = COMMON_SECTION_KEYWORDS[key]
+        if any(kw in title_norm for kw in kws):
+            return key
+    for key in COMMON_SECTION_ORDER:
+        kws = COMMON_SECTION_KEYWORDS[key]
+        if any(kw in body_norm for kw in kws):
+            return key
+    return None
+
+
+def _build_common_section_mapping(chunks: List[PdfChunk]) -> Dict[int, str]:
+    mapping: Dict[int, str] = {}
+    for i, ch in enumerate(chunks):
+        key = _infer_common_section_key(
+            str(getattr(ch, "section_title", "") or ""),
+            str(getattr(ch, "text", "") or ""),
+        )
+        if key is not None:
+            mapping[i] = key
+    return mapping
 
 
 def get_current_item() -> Optional[Dict[str, Any]]:
@@ -634,6 +700,11 @@ def load_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> None:
 def _reset_session() -> None:
     st.session_state.state            = "LANDING"
     st.session_state.chunks           = []
+    st.session_state.raw_chunks       = []
+    st.session_state.available_sections = []
+    st.session_state.selected_sections = None
+    st.session_state.section_label_to_key = {}
+    st.session_state.section_filter_applied = False
     st.session_state.chunk_idx        = 0
     st.session_state.script_items     = []
     st.session_state.script_idx       = 0
@@ -657,15 +728,7 @@ def advance() -> None:
         chunks: List[PdfChunk] = st.session_state.chunks
         st.session_state.chunk_idx += 1
         if st.session_state.chunk_idx >= len(chunks):
-            st.session_state.script_items = [
-                {
-                    "type":    "dialogue",
-                    "speaker": "奈奈",
-                    "text":    "呼……总算读完了！笨蛋主人，能坚持到最后还算有点出息喵。",
-                    "emotion": "char_happy",
-                }
-            ]
-            st.session_state.script_idx = 0
+            _reset_session()
             return
         st.session_state.generator_ready = False
         st.session_state.state = "PROCESSING"
@@ -704,7 +767,7 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
     p = st.session_state.get("parser_used") or "pypdf"
     debug_html = f'<div class="p2g-debug-badge">[debug] {p.upper()}</div>'
     mode = str(st.session_state.get("reading_mode") or "detailed").strip().lower()
-    mode_label = READING_MODE_LABELS.get(mode, "详细阅读")
+    mode_label = READING_MODE_LABELS.get(mode, "标准阅读（详细）")
     mode_html = f'<div class="p2g-mode-badge">模式: {mode_label}</div>'
 
     # ─ 预生成状态徽章（给用户感知下一段是否已准备好）─
@@ -1156,20 +1219,29 @@ def main() -> None:
                 options=READING_MODE_OPTIONS,
                 key="reading_mode",
                 format_func=lambda x: READING_MODE_LABELS.get(str(x), str(x)),
-                help="极速：只读摘要/方法/实验；重点：保留约60%；详细：完整阅读。",
+                help="极速：只读摘要/方法/实验；标准：完整阅读。",
             )
 
-            uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
+            st.session_state.enable_section_pick = st.checkbox(
+                "手动勾选阅读章节（需 MinerU 解析）",
+                value=bool(st.session_state.get("enable_section_pick", False)),
+            )
 
             mineru_ready = token_available()
             default_use_mineru = bool(st.session_state.use_mineru) and mineru_ready
+            if st.session_state.enable_section_pick and mineru_ready:
+                default_use_mineru = True
             st.session_state.use_mineru = st.checkbox(
                 "🔬 使用 MinerU OCR 解析（按章节，需要 MINERU_API_TOKEN）",
                 value=default_use_mineru,
-                disabled=not mineru_ready,
+                disabled=(not mineru_ready) or bool(st.session_state.enable_section_pick),
             )
             if not mineru_ready:
                 st.caption("💡 设置 MINERU_API_TOKEN 可启用按章节解析。")
+            elif st.session_state.enable_section_pick:
+                st.caption("💡 已启用章节勾选，MinerU OCR 自动开启。")
+
+            uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
 
             st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1178,8 +1250,62 @@ def main() -> None:
                 f.write(uploaded.read())
                 tmp_path = Path(f.name)
             st.session_state._tmp_pdf_path = str(tmp_path)  # type: ignore[attr-defined]
+            st.session_state.chunks = []
+            st.session_state.raw_chunks = []
+            st.session_state.available_sections = []
+            st.session_state.selected_sections = None
+            st.session_state.section_label_to_key = {}
+            st.session_state.section_filter_applied = False
             st.session_state.state = "PROCESSING"
             st.rerun()
+
+    if st.session_state.state == "SECTION_PICKER":
+        inject_game_css(_file_to_data_uri(ASSET_BG))
+        ensure_assets_notice()
+
+        sections: List[str] = list(st.session_state.get("available_sections") or [])
+        if not sections:
+            st.session_state.state = "PROCESSING"
+            st.rerun()
+
+        st.markdown(
+            """
+<div style="max-width:760px;margin:8vh auto 0;background:rgba(8,5,20,0.82);
+  backdrop-filter:blur(18px);border:1px solid rgba(130,90,230,0.4);
+  border-radius:18px;padding:1.6rem 1.8rem;">
+  <div style="font-size:1.25rem;font-weight:700;color:#ead8ff;letter-spacing:1px;">
+    选择要阅读的章节
+  </div>
+  <div style="margin-top:0.35rem;color:rgba(195,170,255,0.78);font-size:0.86rem;">
+    这里只展示常见大章节（如 Abstract / Introduction / Method），不会显示 3.1 之类细分标题。
+  </div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        default_selected_state = st.session_state.get("selected_sections")
+        default_selected = default_selected_state if isinstance(default_selected_state, list) else sections
+        selected = st.multiselect(
+            "章节列表",
+            options=sections,
+            default=default_selected,
+        )
+
+        col_back, col_ok = st.columns([1, 1])
+        with col_back:
+            if st.button("返回上传页", key="btn_back_setup", use_container_width=True):
+                st.session_state.state = "SETUP"
+                st.rerun()
+        with col_ok:
+            if st.button("开始阅读", key="btn_start_with_sections", use_container_width=True):
+                if not selected:
+                    st.error("请至少勾选一个章节，不能空选。")
+                else:
+                    st.session_state.selected_sections = list(selected)
+                    st.session_state.section_filter_applied = True
+                    st.session_state.state = "PROCESSING"
+                    st.rerun()
 
     # ════════════════════════════
     # STATE: PROCESSING
@@ -1214,34 +1340,89 @@ def main() -> None:
                     st.rerun()
                 return
 
-            with st.spinner("解析 PDF…"):
-                try:
-                    chunks = load_and_chunk_pdf(
-                        pdf_path,
-                        use_mineru=bool(st.session_state.use_mineru),
-                    )
-                    chunks = apply_reading_mode(
-                        chunks,
-                        reading_mode=str(st.session_state.get("reading_mode") or "detailed"),
-                    )
-                except Exception as e:
-                    st.error(f"PDF 解析失败：{e}")
+            raw_chunks: List[PdfChunk] = list(st.session_state.get("raw_chunks") or [])
+            if not raw_chunks:
+                with st.spinner("解析 PDF…"):
+                    try:
+                        raw_chunks = load_and_chunk_pdf(
+                            pdf_path,
+                            use_mineru=bool(st.session_state.use_mineru),
+                        )
+                    except Exception as e:
+                        st.error(f"PDF 解析失败：{e}")
+                        if st.button("回到封面"):
+                            _reset_session()
+                            st.rerun()
+                        return
+
+                if not raw_chunks:
+                    st.error("没有解析到任何文本。可能是扫描版 PDF，请启用 MinerU OCR。")
                     if st.button("回到封面"):
                         _reset_session()
                         st.rerun()
                     return
 
+                st.session_state.raw_chunks = raw_chunks
+                st.session_state.parser_used = raw_chunks[0].parser if raw_chunks else "pypdf"
+                section_mapping = _build_common_section_mapping(raw_chunks)
+                available_keys = [
+                    k for k in COMMON_SECTION_ORDER
+                    if any(v == k for v in section_mapping.values())
+                ]
+                available_labels = [COMMON_SECTION_LABELS[k] for k in available_keys]
+                st.session_state.available_sections = available_labels
+                st.session_state.section_label_to_key = {COMMON_SECTION_LABELS[k]: k for k in available_keys}
+                if st.session_state.get("selected_sections") is None:
+                    st.session_state.selected_sections = list(available_labels)
+
+                if (
+                    bool(st.session_state.get("enable_section_pick"))
+                    and st.session_state.parser_used == "mineru"
+                    and available_labels
+                    and not bool(st.session_state.get("section_filter_applied"))
+                ):
+                    st.session_state.state = "SECTION_PICKER"
+                    st.rerun()
+
+            working_chunks: List[PdfChunk] = list(st.session_state.get("raw_chunks") or [])
+            if (
+                bool(st.session_state.get("enable_section_pick"))
+                and st.session_state.get("parser_used") == "mineru"
+            ):
+                label_to_key = dict(st.session_state.get("section_label_to_key") or {})
+                if not label_to_key:
+                    st.warning("未识别到可勾选的标准章节，已跳过章节筛选。")
+                    st.session_state.section_filter_applied = True
+                else:
+                    chosen_labels = st.session_state.get("selected_sections")
+                    chosen_keys = {
+                        label_to_key[label]
+                        for label in (chosen_labels or [])
+                        if label in label_to_key
+                    }
+                    section_mapping = _build_common_section_mapping(working_chunks)
+                    if chosen_keys:
+                        working_chunks = [
+                            c for i, c in enumerate(working_chunks)
+                            if section_mapping.get(i) in chosen_keys
+                        ]
+                    else:
+                        working_chunks = []
+
+            chunks = apply_reading_mode(
+                working_chunks,
+                reading_mode=str(st.session_state.get("reading_mode") or "detailed"),
+            )
+
             if not chunks:
-                st.error("没有解析到任何文本。可能是扫描版 PDF，请启用 MinerU OCR。")
-                if st.button("回到封面"):
-                    _reset_session()
+                st.error("当前筛选条件下没有可读内容。请放宽章节勾选或切换阅读模式。")
+                if st.button("返回上传页"):
+                    st.session_state.state = "SETUP"
                     st.rerun()
                 return
 
-            st.session_state.chunks    = chunks
+            st.session_state.chunks = chunks
             st.session_state.chunk_idx = 0
-            parser_used = chunks[0].parser if chunks else "pypdf"
-            st.session_state.parser_used = parser_used
             _clear_prefetch_buffer(bump_run_token=True)
 
         idx = int(st.session_state.chunk_idx)

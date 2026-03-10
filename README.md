@@ -78,8 +78,9 @@ streamlit run app.py
 
 进入设置页后可选择阅读模式：
 - `极速阅读`：只读摘要、方法、实验，速度最快
-- `重点阅读`：保留约 60% chunk，兼顾速度与覆盖
-- `详细阅读`：完整阅读（默认）
+- `标准阅读（详细）`：完整阅读（默认）
+
+可选开启：`手动勾选阅读章节`（仅 MinerU 解析时可用）。
 
 **命令行无头模式**：
 
@@ -90,8 +91,8 @@ python headless.py --mode interactive
 # 自动播放
 python headless.py --mode auto
 
-# 自动播放 + 重点阅读
-python headless.py --mode auto --reading-mode focus
+# 自动播放 + 极速阅读
+python headless.py --mode auto --reading-mode fast
 
 # 指定 PDF，禁用 MinerU
 python headless.py --mode auto --pdf papers/react.pdf --no-mineru
@@ -117,13 +118,12 @@ python headless.py --mode auto --pdf papers/react.pdf --no-mineru
 
 ```bash
 python headless.py --reading-mode fast
-python headless.py --reading-mode focus
 python headless.py --reading-mode detailed
+python headless.py --reading-mode standard
 ```
 
 - `fast`：强压缩阅读，适合快速过论文
-- `focus`：保留重点内容（目标约 60%）
-- `detailed`：完整模式，兼容旧行为（默认）
+- `detailed` / `standard`：标准详细模式，兼容旧行为（默认）
 
 ---
 
