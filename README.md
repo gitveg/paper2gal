@@ -1,129 +1,122 @@
 # 📖 Paper2Galgame
 
-> 把学术论文变成猫娘陪读的视觉小说。
+> 把论文阅读变成有趣的二次元剧情游戏。
 
-上传一篇 PDF，AI 猫娘「奈奈」会把论文**按章节剧本化**——不是摘要，是真正的角色对白、吐槽、小测验和选择题。基于 Streamlit 构建，支持 UI 模式与命令行无头模式。
+上传一篇 PDF，二次元AI（比如猫娘、蜡笔小新）会把论文**按章节剧本化**——不是摘要，是真正的角色对白、吐槽、小测验和选择题。基于 Streamlit 构建，支持 UI 模式与命令行无头模式。
 
 ---
 
-## 目录结构
+## 🗂️ 目录结构
 
 ```
 paper2gal/
-├── app.py               # Streamlit UI 主程序
-├── headless.py          # 命令行无头模式
+├── app.py                 # 🖥️ Streamlit UI 主程序
+├── headless.py            # 💻 命令行无头模式
 ├── utils/
-│   ├── config.py        # 配置加载（读取 .env）
-│   ├── script_engine.py # LLM 剧本生成引擎
-│   ├── pdf_loader.py    # PDF 解析与章节切分
-│   ├── mineru_parser.py # MinerU OCR API 客户端
-│   └── .env             # 敏感配置（自行创建，不提交）
-├── assets/              # 本地图片资源（见下方说明）
-├── papers/              # 示例论文存放目录
-├── output/              # MinerU 解析缓存
-├── requirements.txt
-└── environment.yml
+│   ├── script_engine.py   # 🎭 LLM 剧本生成引擎
+│   ├── pdf_loader.py      # 📄 PDF 解析与章节切分
+│   ├── reading_mode.py    # ⚡ 阅读模式过滤器
+│   ├── mineru_parser.py   # 🔍 MinerU OCR 客户端
+│   ├── config.py          # ⚙️ 配置加载
+│   └── .env               # 🔑 敏感配置（自行创建）
+├── assets/                # 🎨 立绘与背景图片
+├── papers/                # 📚 示例 PDF（含 ReAct Demo）
+├── output/                # 💾 MinerU 解析缓存
+└── .streamlit/config.toml # 🌐 Streamlit 服务配置
 ```
 
 ---
 
-## 快速开始
+## 🚀 快速开始
 
-### 1. 创建环境
+### 1️⃣ 创建环境
 
 ```bash
 conda env create -f environment.yml
 conda activate paper2gal
 ```
 
-### 2. 配置 API Key
+### 2️⃣ 配置 API Key
 
-在 `utils/.env`（或项目根目录 `.env`）中填写：
+复制 `utils/.env.example` 为 `utils/.env`，填入你的密钥：
 
 ```dotenv
-# DeepSeek（推荐）
+# 推荐：DeepSeek
 DeepSeek_API_KEY=sk-xxxxxxxxxxxxxxxx
 DeepSeek_BASE_URL=https://api.deepseek.com/v1
 DeepSeek_MODEL=deepseek-chat
 
-# 或 OpenAI 标准接口
-# OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
-# OPENAI_API_BASE=https://api.openai.com/v1
+# 或 OpenAI 兼容接口
+# OPENAI_KEY=sk-xxxxxxxxxxxxxxxx
 
-# 可选：MinerU OCR（扫描版 PDF 按章节解析）
-# MINERU_API_TOKEN=your_token_here
+# 可选：MinerU OCR（按章节解析，效果更好）
+# MINERU_KEY=your_token_here
 ```
 
-> `.env` 加载优先级：`utils/.env` → 项目根目录 `.env` → 当前工作目录 `.env`
+> 💡 `.env` 加载优先级：`utils/.env` → 项目根目录 `.env` → 当前工作目录 `.env`
 
-### 3. 放入图片资源
+### 3️⃣ 放入角色素材
 
-将以下图片放入 `assets/` 目录（**文件名必须完全一致**，项目只读本地路径，不使用网图）：
+将图片放入 `assets/` 目录，文件名必须完全一致：
 
-| 文件名 | 说明 |
+| 文件 | 用途 |
 |---|---|
-| `bg_classroom.png` | 教室背景 |
-| `char_normal.png` | 奈奈·普通表情 |
-| `char_happy.png` | 奈奈·开心 |
-| `char_angry.png` | 奈奈·生气 |
-| `char_shy.png` | 奈奈·害羞 |
+| `bg_classroom.png` | 游戏背景 |
+| `char_normal.png` | 角色·普通 |
+| `char_happy.png` | 角色·开心 |
+| `char_angry.png` | 角色·生气 |
+| `char_shy.png` | 角色·害羞 |
 
-### 4. 运行
+> 📌 项目只读本地路径，不使用任何网络图片。缺失图片时页面会给出提示。
 
-**UI 模式**（推荐）：
+### 4️⃣ 启动！
 
 ```bash
 streamlit run app.py
 ```
 
-进入设置页后可选择阅读模式：
-- `极速阅读`：只读摘要、方法、实验，速度最快
-- `标准阅读（详细）`：完整阅读（默认）
-
-可选开启：`手动勾选阅读章节`（仅 MinerU 解析时可用）。
-
-**命令行无头模式**：
-
-```bash
-# 交互式（手动选择选项）
-python headless.py --mode interactive
-
-# 自动播放
-python headless.py --mode auto
-
-# 自动播放 + 极速阅读
-python headless.py --mode auto --reading-mode fast
-
-# 指定 PDF，禁用 MinerU
-python headless.py --mode auto --pdf papers/react.pdf --no-mineru
-```
+没有 PDF？点击设置页的 **「🎮 Demo：ReAct 论文」** 按钮，一键加载内置示例直接体验。
 
 ---
 
-## PDF 解析方式
+## 📖 阅读模式
+
+| 模式 | 说明 | 适合场景 |
+|---|---|---|
+| ⚡ **极速阅读** | 只保留摘要、方法、实验关键章节 | 快速了解论文核心 |
+| 📘 **标准阅读**（默认） | 完整阅读全部章节 | 深度理解 |
+
+UI 中可在设置页切换；启用 MinerU 时还可手动勾选阅读章节。
+
+---
+
+## 🔍 PDF 解析双轨
 
 | 方式 | 触发条件 | 特点 |
 |---|---|---|
-| **MinerU OCR** | 配置了 `MINERU_API_TOKEN` 且未使用 `--no-mineru` | 云端 OCR，**按章节切分**，还原论文结构 |
-| **pypdf** | 未配置 token 或主动禁用 | 本地解析，按字符分块，适合文字版 PDF |
+| 🌐 **MinerU OCR** | 配置了 `MINERU_KEY` | 云端 OCR · 按章节切分 · 还原论文结构 |
+| 📄 **pypdf** | 未配置或手动禁用 | 本地解析 · 即时响应 · 无需网络 |
 
-解析结果缓存在 `output/mineru/<pdf_名>/`，重复运行不重复上传。  
-运行时会显示 `[debug] MINERU` 或 `[debug] PYPDF` 标识当前解析方式。
+解析结果缓存在 `output/mineru/`，重启不重复上传。
+界面右上角会显示 `[debug] MINERU` 或 `[debug] PYPDF` 说明当前使用的解析方式。
 
 ---
 
-## 阅读模式（UI / CLI 通用）
-
-`headless.py` 支持参数：
+## 💻 命令行无头模式
 
 ```bash
-python headless.py --reading-mode fast
-python headless.py --reading-mode detailed
-python headless.py --reading-mode standard
-```
+# 交互式推进
+python headless.py --mode interactive
 
-- `fast`：强压缩阅读，适合快速过论文
-- `detailed` / `standard`：标准详细模式，兼容旧行为（默认）
+# 全自动播放
+python headless.py --mode auto
+
+# 极速阅读 + 自动播放
+python headless.py --mode auto --reading-mode fast
+
+# 指定 PDF + 跳过 MinerU
+python headless.py --mode auto --pdf papers/react.pdf --no-mineru
+```
 
 ---
 
