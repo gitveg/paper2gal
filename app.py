@@ -245,6 +245,40 @@ html, body, .stApp {{
   50%       {{ transform: translateY(4px); opacity: 1;    }}
 }}
 
+/* ── 论文图片展示卡（show_image 专用，居中弹出）── */
+.p2g-figure-card {{
+  position: fixed; left: 50%; top: 38%;
+  transform: translate(-50%, -50%);
+  background: rgba(7,5,18,0.92); backdrop-filter: blur(18px);
+  border: 1px solid rgba(140,95,255,0.55); border-radius: 16px;
+  padding: 1.2rem 1.4rem 1rem; text-align: center; z-index: 46;
+  box-shadow: 0 0 60px rgba(100,55,200,0.35);
+  max-width: min(640px, 78vw);
+}}
+/* 图片与对话同屏：缩小卡片，上移，给底部对话框留空间 */
+.p2g-figure-card.with-dialogue {{
+  top: 31%;
+  max-width: min(520px, 68vw);
+  padding: 0.8rem 1rem 0.7rem;
+}}
+.p2g-figure-card.with-dialogue .p2g-figure-img {{
+  max-height: 34vh;
+}}
+.p2g-figure-img {{
+  max-width: 100%; max-height: 46vh;
+  border-radius: 8px; object-fit: contain;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+}}
+.p2g-figure-label {{
+  font-size: 0.68rem; letter-spacing: 3px; text-transform: uppercase;
+  color: rgba(175,145,255,0.55); margin-bottom: 0.4rem;
+}}
+.p2g-figure-caption {{
+  margin-top: 0.55rem;
+  color: rgba(215,198,255,0.85);
+  font-size: 0.84rem; line-height: 1.55;
+}}
+
 /* ── 章节标题卡（sub_head 专用，居中弹出）── */
 .p2g-chapter-card {{
   position: fixed; left: 50%; top: 40%;
@@ -489,6 +523,7 @@ def init_state() -> None:
     st.session_state.setdefault("prefetch_task_run_token", None)
     st.session_state.setdefault("script_run_token", 0)
     st.session_state.setdefault("prefetch_executor", None)
+    st.session_state.setdefault("paper_image_map",   {})
 
 
 def ensure_assets_notice() -> None:
@@ -539,6 +574,34 @@ def _build_common_section_mapping(chunks: List[PdfChunk]) -> Dict[int, str]:
     return mapping
 
 
+def _lookup_image_path(figure_id: str) -> Optional[str]:
+    """
+    在 session_state.paper_image_map 中查找图片文件路径。
+    匹配策略（依序尝试）：精确匹配 → 子串匹配 → 共同数字匹配。
+    """
+    paper_image_map: Dict[str, str] = st.session_state.get("paper_image_map") or {}
+    if not figure_id or not paper_image_map:
+        return None
+    fid = figure_id.strip()
+    fid_lower = fid.lower()
+
+    # 1. 精确匹配
+    for k, v in paper_image_map.items():
+        if k.lower() == fid_lower:
+            return v
+    # 2. 子串匹配（"Figure 1" ∈ "Figure 1: Architecture"）
+    for k, v in paper_image_map.items():
+        if fid_lower in k.lower() or k.lower() in fid_lower:
+            return v
+    # 3. 数字匹配（"Fig. 1" 与 "Figure 1" 共享数字 "1"）
+    fid_nums = re.findall(r"\d+", fid)
+    if fid_nums:
+        for k, v in paper_image_map.items():
+            if re.findall(r"\d+", k) == fid_nums:
+                return v
+    return None
+
+
 def get_current_item() -> Optional[Dict[str, Any]]:
     items: List[Dict[str, Any]] = st.session_state.script_items
     idx: int = st.session_state.script_idx
@@ -569,8 +632,50 @@ def _clear_prefetch_buffer(*, bump_run_token: bool = False) -> None:
         st.session_state.script_run_token = int(st.session_state.get("script_run_token", 0)) + 1
 
 
+def _merge_show_image_with_dialogue(
+    items: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    把 show_image + 紧随的 dialogue 合并为带 figure_id 的 dialogue，
+    使图片和讲解文字同屏显示，不再是分两步的断层体验。
+    同时把孤立的 show_image（无紧随 dialogue）转成 dialogue 形式。
+    """
+    result: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(items):
+        item = items[i]
+        if item.get("type") == "show_image":
+            figure_id = item.get("figure_id") or ""
+            caption   = item.get("caption") or ""
+            # 若下一条是 dialogue，合并
+            if i + 1 < len(items) and items[i + 1].get("type") == "dialogue":
+                next_item = dict(items[i + 1])
+                if not next_item.get("figure_id"):
+                    next_item["figure_id"] = figure_id
+                result.append(next_item)
+                i += 2
+                continue
+            # 孤立 show_image → 转成 dialogue（使用 caption 或兜底文案）
+            text = caption if caption else (
+                f"来看看这张图喵～（{figure_id}）" if figure_id else "来看看这张图喵～"
+            )
+            result.append({
+                "type": "dialogue",
+                "speaker": "奈奈",
+                "text": text,
+                "emotion": "char_normal",
+                "figure_id": figure_id,
+            })
+            i += 1
+        else:
+            result.append(item)
+            i += 1
+    return result
+
+
 def _apply_script_items(script: List[Dict[str, Any]]) -> None:
-    st.session_state.script_items     = script
+    merged = _merge_show_image_with_dialogue(script)
+    st.session_state.script_items     = merged
     st.session_state.script_idx       = 0
     st.session_state.current_feedback = None
     st.session_state.answered         = False
@@ -580,10 +685,12 @@ def _apply_script_items(script: List[Dict[str, Any]]) -> None:
 def _generate_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> List[Dict[str, Any]]:
     gen = ScriptGenerator()
     chunk = chunks[chunk_idx]
+    image_map = dict(getattr(chunk, "image_map", ())) or None
     return gen.generate_script(
         chunk.text,
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
+        image_map=image_map,
     )
 
 
@@ -592,9 +699,15 @@ def _generate_script_payload(
     *,
     chunk_index: int,
     section_title: Optional[str],
+    image_map: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     gen = ScriptGenerator()
-    return gen.generate_script(chunk_text, chunk_index=chunk_index, section_title=section_title)
+    return gen.generate_script(
+        chunk_text,
+        chunk_index=chunk_index,
+        section_title=section_title,
+        image_map=image_map,
+    )
 
 
 def _collect_prefetch_if_ready() -> None:
@@ -681,11 +794,13 @@ def _ensure_next_chunk_prefetch(chunks: List[PdfChunk], current_chunk_idx: int) 
             return
 
     chunk = chunks[next_idx]
+    image_map = dict(getattr(chunk, "image_map", ())) or None
     future = _get_prefetch_executor().submit(
         _generate_script_payload,
         chunk.text,
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
+        image_map=image_map,
     )
     st.session_state.prefetch_future = future
     st.session_state.prefetch_target_idx = next_idx
@@ -712,6 +827,7 @@ def _reset_session() -> None:
     st.session_state.answered         = False
     st.session_state.generator_ready  = False
     _clear_prefetch_buffer(bump_run_token=True)
+    st.session_state.paper_image_map  = {}
 
 
 def advance() -> None:
@@ -765,7 +881,9 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
 
     # ─ Debug 徽章 ─
     p = st.session_state.get("parser_used") or "pypdf"
-    debug_html = f'<div class="p2g-debug-badge">[debug] {p.upper()}</div>'
+    img_count = len(st.session_state.get("paper_image_map") or {})
+    img_str = f" | 🖼 {img_count}张图" if img_count else ""
+    debug_html = f'<div class="p2g-debug-badge">[debug] {p.upper()}{img_str}</div>'
     mode = str(st.session_state.get("reading_mode") or "detailed").strip().lower()
     mode_label = READING_MODE_LABELS.get(mode, "标准阅读（详细）")
     mode_html = f'<div class="p2g-mode-badge">模式: {mode_label}</div>'
@@ -807,13 +925,25 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
   <div class="p2g-text">～ {title} ～</div>
   <div class="p2g-next-arrow">▼</div>
 </div>"""
+
     else:
+        # ── 对话携带 figure_id 时在上方渲染图片卡 ──
         chapter_html = ""
         if not item:
             speaker, text = "奈奈", "还没有脚本内容……"
         elif t == "dialogue":
-            speaker = str(item.get("speaker") or "奈奈")
-            text    = str(item.get("text")    or "")
+            speaker   = str(item.get("speaker") or "奈奈")
+            text      = str(item.get("text")    or "")
+            figure_id = str(item.get("figure_id") or "")
+            if figure_id:
+                img_path_str = _lookup_image_path(figure_id)
+                if img_path_str:
+                    img_uri = _file_to_data_uri(Path(img_path_str))
+                    chapter_html = f"""
+<div class="p2g-figure-card with-dialogue">
+  <div class="p2g-figure-label">论文插图</div>
+  <img class="p2g-figure-img" src="{img_uri}" alt="{figure_id}" />
+</div>""" if img_uri else ""
         elif t == "quiz":
             speaker = "奈奈"
             text    = str(item.get("question") or "来做个小测验喵！")
@@ -1436,6 +1566,11 @@ def main() -> None:
 
             st.session_state.chunks = chunks
             st.session_state.chunk_idx = 0
+            # 合并所有 chunk 的图片映射，供 show_image 渲染时查找
+            merged_image_map: Dict[str, str] = {}
+            for _c in chunks:
+                merged_image_map.update(dict(getattr(_c, "image_map", ())))
+            st.session_state.paper_image_map = merged_image_map
             _clear_prefetch_buffer(bump_run_token=True)
 
         idx = int(st.session_state.chunk_idx)

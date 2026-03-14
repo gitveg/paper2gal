@@ -30,10 +30,22 @@ def _render_item(item: Dict[str, Any]) -> None:
         title = item.get("title", "")
         print(f"  ──────── {title} ────────")
         return
+    if t == "show_image":
+        figure_id = item.get("figure_id", "")
+        caption = item.get("caption", "")
+        print(f"  ╔══ 论文插图：{figure_id} ══╗")
+        if caption:
+            print(f"  ║  {caption}")
+        print(f"  ╚{'═' * (len(figure_id) + 14)}╝")
+        return
     emo = item.get("emotion")
     if t == "dialogue":
         speaker = item.get("speaker", "奈奈")
         text = item.get("text", "")
+        figure_id = item.get("figure_id", "")
+        if figure_id:
+            print(f"  ╔══ 论文插图：{figure_id} ══╗")
+            print(f"  ╚{'═' * (len(figure_id) + 14)}╝")
         print(f"[{speaker} | {emo}] {text}")
     elif t == "quiz":
         q = item.get("question", "")
@@ -112,7 +124,7 @@ def _play_script_items(
         _render_item(item)
 
         t = item.get("type")
-        if t == "sub_head":
+        if t in {"sub_head", "show_image"}:
             pass  # 无需选项，直接继续
         elif t in {"quiz", "choice"}:
             options = item.get("options") or []
@@ -185,10 +197,12 @@ def run_headless(
     for chunk in chunks:
         section_label = f" {chunk.section_title}" if getattr(chunk, "section_title", "") else ""
         _print_divider(f"Chunk #{chunk.index}{section_label}")
+        image_map = dict(getattr(chunk, "image_map", ())) or None
         script_items = gen.generate_script(
             chunk.text,
             chunk_index=chunk.index,
             section_title=getattr(chunk, "section_title", "") or None,
+            image_map=image_map,
         )
 
         export.append(
