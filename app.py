@@ -1222,18 +1222,26 @@ def main() -> None:
                 help="极速：只读摘要/方法/实验；标准：完整阅读。",
             )
 
-            st.session_state.enable_section_pick = st.checkbox(
+            # 初始化 enable_section_pick（如果还没有值）
+            st.session_state.setdefault("enable_section_pick", False)
+
+            st.checkbox(
                 "手动勾选阅读章节（需 MinerU 解析）",
-                value=bool(st.session_state.get("enable_section_pick", False)),
+                key="enable_section_pick",
             )
 
+            # 初始化 use_mineru（如果还没有值）
+            st.session_state.setdefault("use_mineru", True)
+
             mineru_ready = token_available()
-            default_use_mineru = bool(st.session_state.use_mineru) and mineru_ready
-            if st.session_state.enable_section_pick and mineru_ready:
-                default_use_mineru = True
-            st.session_state.use_mineru = st.checkbox(
+            # 如果启用了章节勾选，强制使用 MinerU
+            use_mineru_for_checkbox = mineru_ready and (
+                st.session_state.enable_section_pick or st.session_state.use_mineru
+            )
+            st.checkbox(
                 "🔬 使用 MinerU OCR 解析（按章节，需要 MINERU_API_TOKEN）",
-                value=default_use_mineru,
+                key="use_mineru",
+                value=use_mineru_for_checkbox,
                 disabled=(not mineru_ready) or bool(st.session_state.enable_section_pick),
             )
             if not mineru_ready:
@@ -1284,13 +1292,18 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-        default_selected_state = st.session_state.get("selected_sections")
-        default_selected = default_selected_state if isinstance(default_selected_state, list) else sections
-        selected = st.multiselect(
+        # 初始化 session_state 中的 selected_sections（如果还没有值）
+        if "selected_sections" not in st.session_state:
+            st.session_state.selected_sections = sections
+
+        # 使用 key 参数直接绑定到 session_state，避免 default 参数导致的点击两次问题
+        st.multiselect(
             "章节列表",
             options=sections,
-            default=default_selected,
+            key="selected_sections",
         )
+        # 从 session_state 获取最终选择
+        selected = st.session_state.selected_sections
 
         col_back, col_ok = st.columns([1, 1])
         with col_back:
