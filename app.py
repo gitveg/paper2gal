@@ -30,6 +30,10 @@ ASSET_CHAR = {
     "char_shy":    ASSETS_DIR / "char_shy.png",
 }
 
+# 演示文档（内置，无需用户上传）
+DEMO_PDF = ROOT_DIR / "papers" / "ReAct.pdf"
+DEMO_PDF_TITLE = "ReAct: Synergizing Reasoning and Acting in Language Models"
+
 _ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 READING_MODE_OPTIONS = ["fast", "detailed"]
 READING_MODE_LABELS = {
@@ -521,6 +525,7 @@ def init_state() -> None:
     st.session_state.setdefault("prefetch_future", None)
     st.session_state.setdefault("prefetch_target_idx", None)
     st.session_state.setdefault("prefetch_task_run_token", None)
+    st.session_state.setdefault("use_demo_pdf",    False)
     st.session_state.setdefault("script_run_token", 0)
     st.session_state.setdefault("prefetch_executor", None)
     st.session_state.setdefault("paper_image_map",   {})
@@ -1174,15 +1179,27 @@ def render_landing_page() -> None:
   margin-top: 0.6rem;
   letter-spacing: 0.5px;
 }
-.st-key-btn_start_game {
+.st-key-btn_start_game, .st-key-btn_demo_play {
   max-width: 620px;
-  margin: 0.9rem auto 0 !important;
+  margin: 0.6rem auto 0 !important;
 }
-.st-key-btn_start_game div[data-testid="stButton"] > button {
+.st-key-btn_start_game div[data-testid="stButton"] > button,
+.st-key-btn_demo_play div[data-testid="stButton"] > button {
   height: 48px;
   font-weight: 800;
   text-align: center;
   letter-spacing: 1px;
+}
+.p2g-demo-badge {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: 0.45rem 1rem;
+  background: rgba(120,80,220,0.18);
+  border: 1px solid rgba(160,110,255,0.35);
+  border-radius: 30px;
+  font-size: 0.82rem;
+  color: rgba(210,185,255,0.82);
+  letter-spacing: 0.5px;
 }
 </style>
 <div class="p2g-landing-card">
@@ -1193,14 +1210,30 @@ def render_landing_page() -> None:
   <div class="p2g-landing-note">
     建议先准备好 API Key（OpenAI / DeepSeek）和角色素材图片，再开始体验。
   </div>
+  <div class="p2g-demo-badge">内置演示文档：ReAct — 推理与行动协同的语言模型</div>
 </div>
         """,
         unsafe_allow_html=True,
     )
 
-    if st.button("开始游戏", key="btn_start_game", use_container_width=True):
-        st.session_state.state = "GUIDE"
-        st.rerun()
+    _, mid_l, mid_r, _ = st.columns([0.8, 1, 1, 0.8])
+    with mid_l:
+        if st.button("上传论文开始", key="btn_start_game", use_container_width=True):
+            st.session_state.use_demo_pdf = False
+            st.session_state.state = "GUIDE"
+            st.rerun()
+    with mid_r:
+        demo_disabled = not DEMO_PDF.exists()
+        if st.button(
+            "演示体验 (ReAct)",
+            key="btn_demo_play",
+            use_container_width=True,
+            disabled=demo_disabled,
+            help=None if not demo_disabled else "找不到 papers/ReAct.pdf，请确认文件存在。",
+        ):
+            st.session_state.use_demo_pdf = True
+            st.session_state.state = "SETUP"
+            st.rerun()
 
 
 def render_guide_page() -> None:
@@ -1379,23 +1412,56 @@ def main() -> None:
             elif st.session_state.enable_section_pick:
                 st.caption("💡 已启用章节勾选，MinerU OCR 自动开启。")
 
-            uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
+            use_demo: bool = bool(st.session_state.get("use_demo_pdf"))
+
+            if use_demo:
+                # ── 演示文档模式：显示信息卡 + 直接开始按钮 ──
+                st.markdown(
+                    f"""
+<div style="
+  margin-top:0.8rem; padding:0.9rem 1.1rem;
+  background:rgba(100,60,200,0.15); border-radius:12px;
+  border:1px solid rgba(150,110,255,0.35);
+">
+  <div style="font-size:0.72rem;letter-spacing:2px;color:rgba(180,150,255,0.6);
+    text-transform:uppercase;margin-bottom:0.25rem;">演示文档</div>
+  <div style="color:#e8d8ff;font-weight:700;font-size:1rem;line-height:1.5;">
+    {DEMO_PDF_TITLE}
+  </div>
+  <div style="color:rgba(200,175,255,0.65);font-size:0.82rem;margin-top:0.2rem;">
+    papers/ReAct.pdf &nbsp;·&nbsp; 无需上传，直接开始
+  </div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+                if st.button("开始演示体验", key="btn_start_demo", use_container_width=True):
+                    st.session_state._tmp_pdf_path = str(DEMO_PDF)  # type: ignore[attr-defined]
+                    st.session_state.chunks = []
+                    st.session_state.raw_chunks = []
+                    st.session_state.available_sections = []
+                    st.session_state.selected_sections = None
+                    st.session_state.section_label_to_key = {}
+                    st.session_state.section_filter_applied = False
+                    st.session_state.state = "PROCESSING"
+                    st.rerun()
+            else:
+                # ── 普通上传模式 ──
+                uploaded = st.file_uploader("选择一篇 PDF 论文", type=["pdf"])
+                if uploaded is not None:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
+                        f.write(uploaded.read())
+                        tmp_path = Path(f.name)
+                    st.session_state._tmp_pdf_path = str(tmp_path)  # type: ignore[attr-defined]
+                    st.session_state.chunks = []
+                    st.session_state.raw_chunks = []
+                    st.session_state.available_sections = []
+                    st.session_state.selected_sections = None
+                    st.session_state.section_label_to_key = {}
+                    st.session_state.section_filter_applied = False
+                    st.session_state.state = "PROCESSING"
+                    st.rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
-
-        if uploaded is not None:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
-                f.write(uploaded.read())
-                tmp_path = Path(f.name)
-            st.session_state._tmp_pdf_path = str(tmp_path)  # type: ignore[attr-defined]
-            st.session_state.chunks = []
-            st.session_state.raw_chunks = []
-            st.session_state.available_sections = []
-            st.session_state.selected_sections = None
-            st.session_state.section_label_to_key = {}
-            st.session_state.section_filter_applied = False
-            st.session_state.state = "PROCESSING"
-            st.rerun()
 
     if st.session_state.state == "SECTION_PICKER":
         inject_game_css(_file_to_data_uri(ASSET_BG))
