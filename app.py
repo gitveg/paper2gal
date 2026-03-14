@@ -1488,8 +1488,8 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-        # 初始化 session_state 中的 selected_sections（如果还没有值）
-        if "selected_sections" not in st.session_state:
+        # 初始化 session_state 中的 selected_sections（必须在 widget 实例化前完成）
+        if st.session_state.get("selected_sections") is None:
             st.session_state.selected_sections = sections
 
         # 使用 key 参数直接绑定到 session_state，避免 default 参数导致的点击两次问题
@@ -1511,7 +1511,6 @@ def main() -> None:
                 if not selected:
                     st.error("请至少勾选一个章节，不能空选。")
                 else:
-                    st.session_state.selected_sections = list(selected)
                     st.session_state.section_filter_applied = True
                     st.session_state.state = "PROCESSING"
                     st.rerun()
