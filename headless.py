@@ -15,6 +15,10 @@ ROOT_DIR = Path(__file__).resolve().parent
 PAPERS_DIR = ROOT_DIR / "papers"
 DEFAULT_PAPER_NAME = "ReAct"
 
+# 默认角色
+DEFAULT_CHARACTER = "nana"
+DEFAULT_CHARACTER_NAME = "奈奈"
+
 
 def _print_divider(title: str = "") -> None:
     line = "=" * 72
@@ -151,6 +155,7 @@ def run_headless(
     export_path: Optional[Path],
     use_mineru: bool,
     reading_mode: ReadingMode,
+    character_name: str = DEFAULT_CHARACTER_NAME,
 ) -> None:
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF 不存在：{pdf_path}")
@@ -181,6 +186,7 @@ def run_headless(
     print(f"阅读模式：{reading_mode}，chunks：{input_chunk_count} -> {len(chunks)}")
     print(f"chunks：{len(chunks)}（chunk_size={chunk_size}, overlap={chunk_overlap}）")
     print(f"交互：{'是' if interactive else '否'}（auto_strategy={auto_strategy}）")
+    print(f"角色：{character_name}")
 
     for chunk in chunks:
         section_label = f" {chunk.section_title}" if getattr(chunk, "section_title", "") else ""
@@ -189,6 +195,7 @@ def run_headless(
             chunk.text,
             chunk_index=chunk.index,
             section_title=getattr(chunk, "section_title", "") or None,
+            character_name=character_name,
         )
 
         export.append(
@@ -230,6 +237,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["fast", "detailed", "standard"],
         default="detailed",
         help="阅读模式：fast=极速，detailed/standard=标准详细（默认）",
+    )
+    p.add_argument(
+        "--character",
+        default=DEFAULT_CHARACTER_NAME,
+        help=f"选择角色（默认：{DEFAULT_CHARACTER_NAME}）",
     )
 
     p.add_argument(
@@ -288,6 +300,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             export_path=export_path,
             use_mineru=False if bool(args.no_mineru) else True,
             reading_mode=str(args.reading_mode),
+            character_name=str(args.character) if args.character else DEFAULT_CHARACTER_NAME,
         )
         return 0
     except Exception as e:
