@@ -47,7 +47,6 @@ CHARACTERS = {
     },
 }
 
-<<<<<<< HEAD
 def _get_character_folder(character_id: str) -> Path:
     """获取角色资源文件夹路径"""
     folder = CHARACTERS.get(character_id, CHARACTERS["nana"])["folder"]
@@ -69,11 +68,9 @@ def _get_character_name(character_id: str) -> str:
 
 # 默认角色
 DEFAULT_CHARACTER = "nana"
-=======
 # 演示文档（内置，无需用户上传）
 DEMO_PDF = ROOT_DIR / "papers" / "ReAct.pdf"
 DEMO_PDF_TITLE = "ReAct: Synergizing Reasoning and Acting in Language Models"
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
 
 _ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 READING_MODE_OPTIONS = ["fast", "detailed"]
@@ -728,21 +725,15 @@ def _apply_script_items(script: List[Dict[str, Any]]) -> None:
 def _generate_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> List[Dict[str, Any]]:
     gen = ScriptGenerator()
     chunk = chunks[chunk_idx]
-<<<<<<< HEAD
     # 获取当前角色名称
     character_name = _get_character_name(st.session_state.get("selected_character", DEFAULT_CHARACTER))
-=======
     image_map = dict(getattr(chunk, "image_map", ())) or None
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
     return gen.generate_script(
         chunk.text,
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
-<<<<<<< HEAD
         character_name=character_name,
-=======
         image_map=image_map,
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
     )
 
 
@@ -751,22 +742,16 @@ def _generate_script_payload(
     *,
     chunk_index: int,
     section_title: Optional[str],
-<<<<<<< HEAD
     character_name: str,
-=======
     image_map: Optional[Dict[str, str]] = None,
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
 ) -> List[Dict[str, Any]]:
     gen = ScriptGenerator()
     return gen.generate_script(
         chunk_text,
         chunk_index=chunk_index,
         section_title=section_title,
-<<<<<<< HEAD
         character_name=character_name,
-=======
         image_map=image_map,
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
     )
 
 
@@ -876,22 +861,16 @@ def _ensure_next_chunk_prefetch(chunks: List[PdfChunk], current_chunk_idx: int) 
             return
 
     chunk = chunks[next_idx]
-<<<<<<< HEAD
     # 获取当前角色名称，确保预生成也使用正确的角色
     character_name = _get_character_name(st.session_state.get("selected_character", DEFAULT_CHARACTER))
-=======
     image_map = dict(getattr(chunk, "image_map", ())) or None
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
     future = _get_prefetch_executor().submit(
         _generate_script_payload,
         chunk.text,
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
-<<<<<<< HEAD
         character_name=character_name,  # 显式传递角色名称
-=======
         image_map=image_map,
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
     )
     st.session_state.prefetch_future = future
     st.session_state.prefetch_target_idx = next_idx
@@ -1045,7 +1024,6 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
         if not item:
             speaker, text = current_character_name, "还没有脚本内容……"
         elif t == "dialogue":
-<<<<<<< HEAD
             raw_speaker = str(item.get("speaker") or "")
             # 关键修正：如果原定说话人是“奈奈”或为空，强制修正为当前选中的角色名
             if raw_speaker == "奈奈" or raw_speaker == "" or raw_speaker != current_character_name:
@@ -1053,7 +1031,6 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
             else:
                 speaker = raw_speaker
             text = str(item.get("text") or "")
-=======
             speaker   = str(item.get("speaker") or "奈奈")
             text      = str(item.get("text")    or "")
             figure_id = str(item.get("figure_id") or "")
@@ -1066,7 +1043,6 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
   <div class="p2g-figure-label">论文插图</div>
   <img class="p2g-figure-img" src="{img_uri}" alt="{figure_id}" />
 </div>""" if img_uri else ""
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
         elif t == "quiz":
             speaker = current_character_name
             text    = str(item.get("question") or f"来做个小测验{current_character_name}！")
@@ -1444,6 +1420,7 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
     init_state()
+    uploaded = None
     # 强制同步一次，确保无论在哪个页面，selected_character 永远等于 persistent_char
     if "persistent_char" in st.session_state:
         st.session_state.selected_character = st.session_state.persistent_char
@@ -1636,7 +1613,6 @@ def main() -> None:
 
             st.markdown("</div>", unsafe_allow_html=True)
 
-<<<<<<< HEAD
         if uploaded is not None:      
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
                 f.write(uploaded.read())
@@ -1655,9 +1631,6 @@ def main() -> None:
         # 调试信息
         #st.write(f"DEBUG SECTION_PICKER: selected_character = {st.session_state.get('selected_character')}")
         
-=======
-    if st.session_state.state == "SECTION_PICKER":
->>>>>>> 48a970c4da66ee735775400400e939bc352b23d1
         inject_game_css(_file_to_data_uri(ASSET_BG))
         ensure_assets_notice()
 
