@@ -23,13 +23,51 @@ ROOT_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = ROOT_DIR / "assets"
 
 ASSET_BG = ASSETS_DIR / "bg_classroom.png"
-ASSET_CHAR = {
-    "char_normal": ASSETS_DIR / "char_normal.png",
-    "char_happy":  ASSETS_DIR / "char_happy.png",
-    "char_angry":  ASSETS_DIR / "char_angry.png",
-    "char_shy":    ASSETS_DIR / "char_shy.png",
+
+# ──────────────────────────────────────────────
+# 角色配置：支持多角色
+# 每个角色一个文件夹，包含不同表情的图片
+# 角色文件夹结构：
+#   assets/角色ID/
+#     ├── normal.png  (普通表情)
+#     ├── happy.png   (开心)
+#     ├── angry.png   (生气)
+#     └── shy.png    (害羞)
+# ──────────────────────────────────────────────
+CHARACTERS = {
+    "nana": {
+        "name": "奈奈",
+        "description": "傲娇的二次元猫娘",
+        "folder": "nana",
+    },
+    "lina": {
+        "name": "玲娜贝儿",
+        "description": "机智的粉色小狐狸",
+        "folder": "lina",
+    },
 }
 
+def _get_character_folder(character_id: str) -> Path:
+    """获取角色资源文件夹路径"""
+    folder = CHARACTERS.get(character_id, CHARACTERS["nana"])["folder"]
+    return ASSETS_DIR / folder
+
+def _load_character_assets(character_id: str) -> dict:
+    """加载角色的所有表情图片路径"""
+    char_folder = _get_character_folder(character_id)
+    return {
+        "char_normal": char_folder / "char_normal.png",
+        "char_happy":  char_folder / "char_happy.png",
+        "char_angry":  char_folder / "char_angry.png",
+        "char_shy":    char_folder / "char_shy.png",
+    }
+
+def _get_character_name(character_id: str) -> str:
+    """获取角色显示名称"""
+    return CHARACTERS.get(character_id, CHARACTERS["nana"])["name"]
+
+# 默认角色
+DEFAULT_CHARACTER = "nana"
 # 演示文档（内置，无需用户上传）
 DEMO_PDF = ROOT_DIR / "papers" / "ReAct.pdf"
 DEMO_PDF_TITLE = "ReAct: Synergizing Reasoning and Acting in Language Models"
@@ -535,9 +573,6 @@ def ensure_assets_notice() -> None:
     missing = []
     if not ASSET_BG.exists():
         missing.append(str(ASSET_BG))
-    for p in ASSET_CHAR.values():
-        if not p.exists():
-            missing.append(str(p))
     if missing:
         st.warning(
             "检测到以下本地图片资源缺失，请手动放入（代码只读本地路径，不使用网图）：\n\n- "
@@ -690,11 +725,14 @@ def _apply_script_items(script: List[Dict[str, Any]]) -> None:
 def _generate_script_for_chunk(chunks: List[PdfChunk], chunk_idx: int) -> List[Dict[str, Any]]:
     gen = ScriptGenerator()
     chunk = chunks[chunk_idx]
+    # 获取当前角色名称
+    character_name = _get_character_name(st.session_state.get("selected_character", DEFAULT_CHARACTER))
     image_map = dict(getattr(chunk, "image_map", ())) or None
     return gen.generate_script(
         chunk.text,
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
+        character_name=character_name,
         image_map=image_map,
     )
 
@@ -704,6 +742,7 @@ def _generate_script_payload(
     *,
     chunk_index: int,
     section_title: Optional[str],
+    character_name: str,
     image_map: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     gen = ScriptGenerator()
@@ -711,6 +750,7 @@ def _generate_script_payload(
         chunk_text,
         chunk_index=chunk_index,
         section_title=section_title,
+        character_name=character_name,
         image_map=image_map,
     )
 
@@ -751,6 +791,17 @@ def _take_prefetched_script(chunk_idx: int, *, wait_if_running: bool = False) ->
     cache = dict(st.session_state.get("prefetch_cache") or {})
     if chunk_idx in cache:
         script = cache.pop(chunk_idx)
+        # 验证预取脚本的角色是否与当前选择一致
+        if script:
+            # 获取当前"应该"显示的名称
+            current_character_name = _get_character_name(st.session_state.get("selected_character", DEFAULT_CHARACTER))
+            
+            # 不要直接对比 speaker，因为 AI 可能会写错
+            # 我们在这里强制把预取脚本里的所有 speaker 修正为当前选择的角色
+            for item in script:
+                if item.get("type") == "dialogue":
+                    item["speaker"] = current_character_name
+        
         st.session_state.prefetch_cache = cache
         return script
 
@@ -769,6 +820,17 @@ def _take_prefetched_script(chunk_idx: int, *, wait_if_running: bool = False) ->
         script = future.result()
     except Exception:
         script = None
+
+    # 验证预取脚本的角色是否与当前选择一致
+    if script:
+        # 获取当前"应该"显示的名称
+        current_character_name = _get_character_name(st.session_state.get("selected_character", DEFAULT_CHARACTER))
+        
+        # 不要直接对比 speaker，因为 AI 可能会写错
+        # 我们在这里强制把预取脚本里的所有 speaker 修正为当前选择的角色
+        for item in script:
+            if item.get("type") == "dialogue":
+                item["speaker"] = current_character_name
 
     st.session_state.prefetch_future = None
     st.session_state.prefetch_target_idx = None
@@ -799,12 +861,15 @@ def _ensure_next_chunk_prefetch(chunks: List[PdfChunk], current_chunk_idx: int) 
             return
 
     chunk = chunks[next_idx]
+    # 获取当前角色名称，确保预生成也使用正确的角色
+    character_name = _get_character_name(st.session_state.get("selected_character", DEFAULT_CHARACTER))
     image_map = dict(getattr(chunk, "image_map", ())) or None
     future = _get_prefetch_executor().submit(
         _generate_script_payload,
         chunk.text,
         chunk_index=chunk.index,
         section_title=getattr(chunk, "section_title", "") or None,
+        character_name=character_name,  # 显式传递角色名称
         image_map=image_map,
     )
     st.session_state.prefetch_future = future
@@ -906,12 +971,34 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
             prefetch_html = '<div class="p2g-prefetch-badge loading">正在预生成下一段...</div>'
 
     # ─ 立绘 ─
+    # 获取当前选择的角色
+    current_character = st.session_state.get("selected_character", DEFAULT_CHARACTER)
+    # 使用新角色的图片加载方式
+    char_assets = _load_character_assets(current_character)
+    
+    # 调试信息 - 显示图片路径
+    #st.caption(f"DEBUG: current_character={current_character}, char_assets={char_assets}")
+    
+    # 兼容旧的 emotion key（如 char_normal -> normal）
     emotion_key = "char_normal"
     if item and item.get("emotion"):
         emotion_key = str(item["emotion"])
-    char_path = ASSET_CHAR.get(emotion_key, ASSET_CHAR["char_normal"])
-    char_uri  = _file_to_data_uri(char_path)
+    # 将 char_xxx 转换为 xxx
+    emotion_file_key = emotion_key.replace("char_", "") if emotion_key.startswith("char_") else emotion_key
+    char_path = char_assets.get(emotion_key) or char_assets.get(f"char_{emotion_file_key}")
+    if not char_path:
+        # 回退到默认
+        char_path = char_assets.get("char_normal")
+    
+    # 调试信息 - 显示实际使用的图片路径
+    #st.caption(f"DEBUG: emotion_key={emotion_key}, char_path={char_path}, exists={char_path.exists() if char_path else False}")
+    
+    char_uri  = _file_to_data_uri(char_path) if char_path else None
     char_html = f'<img class="p2g-char" src="{char_uri}" />' if char_uri else ""
+
+    # 获取当前角色名称
+    current_character_name = _get_character_name(current_character)
+    #st.caption(f"DEBUG: current_character_name={current_character_name}")
 
     # ─ 内容区（对话框 / 名牌 / 章节标题卡）─
     t = (item or {}).get("type") or "dialogue"
@@ -924,7 +1011,7 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
   <div class="p2g-chapter-label">Chapter</div>
   <div class="p2g-chapter-title">{title}</div>
 </div>"""
-        nameplate_html = '<div class="p2g-nameplate">奈奈</div>'
+        nameplate_html = f'<div class="p2g-nameplate">{current_character_name}</div>'
         dialogue_html  = f"""
 <div class="p2g-dialogue">
   <div class="p2g-text">～ {title} ～</div>
@@ -935,8 +1022,15 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
         # ── 对话携带 figure_id 时在上方渲染图片卡 ──
         chapter_html = ""
         if not item:
-            speaker, text = "奈奈", "还没有脚本内容……"
+            speaker, text = current_character_name, "还没有脚本内容……"
         elif t == "dialogue":
+            raw_speaker = str(item.get("speaker") or "")
+            # 关键修正：如果原定说话人是“奈奈”或为空，强制修正为当前选中的角色名
+            if raw_speaker == "奈奈" or raw_speaker == "" or raw_speaker != current_character_name:
+                speaker = current_character_name
+            else:
+                speaker = raw_speaker
+            text = str(item.get("text") or "")
             speaker   = str(item.get("speaker") or "奈奈")
             text      = str(item.get("text")    or "")
             figure_id = str(item.get("figure_id") or "")
@@ -950,13 +1044,13 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
   <img class="p2g-figure-img" src="{img_uri}" alt="{figure_id}" />
 </div>""" if img_uri else ""
         elif t == "quiz":
-            speaker = "奈奈"
-            text    = str(item.get("question") or "来做个小测验喵！")
+            speaker = current_character_name
+            text    = str(item.get("question") or f"来做个小测验{current_character_name}！")
         elif t == "choice":
-            speaker = "奈奈"
+            speaker = current_character_name
             text    = str(item.get("prompt") or "你选哪个？")
         else:
-            speaker = "奈奈"
+            speaker = current_character_name
             text    = str(item.get("text") or json.dumps(item, ensure_ascii=False))
 
         # 反馈气泡 + 解析（quiz 区分对错颜色；choice 统一中性色）
@@ -978,7 +1072,7 @@ def render_game_screen(item: Optional[Dict[str, Any]]) -> None:
             if explanation:
                 fb_html += (
                     f'<div class="p2g-explanation">'
-                    f'<span class="p2g-explanation-label">💭 奈奈的想法</span>'
+                    f'<span class="p2g-explanation-label">💭 {current_character_name}的想法</span>'
                     f'{explanation}'
                     f'</div>'
                 )
@@ -1326,17 +1420,29 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
     init_state()
+    uploaded = None
+    # 强制同步一次，确保无论在哪个页面，selected_character 永远等于 persistent_char
+    if "persistent_char" in st.session_state:
+        st.session_state.selected_character = st.session_state.persistent_char
+    # 确保角色选择始终存在，并验证其值在CHARACTERS中有效
+    elif "selected_character" not in st.session_state:
+        st.session_state.selected_character = DEFAULT_CHARACTER
+    elif st.session_state.selected_character not in CHARACTERS:
+        st.session_state.selected_character = DEFAULT_CHARACTER
 
     if st.session_state.state == "LANDING":
         render_landing_page()
 
-    if st.session_state.state == "GUIDE":
+    elif st.session_state.state == "GUIDE":
         render_guide_page()
 
     # ════════════════════════════
     # STATE: SETUP
     # ════════════════════════════
-    if st.session_state.state == "SETUP":
+    elif st.session_state.state == "SETUP":
+        # 调试信息
+        #st.write(f"DEBUG SETUP: selected_character = {st.session_state.get('selected_character')}")
+        
         # 封面注入背景（无图时只用黑底）
         inject_game_css(_file_to_data_uri(ASSET_BG))
         ensure_assets_notice()
@@ -1375,6 +1481,50 @@ def main() -> None:
                 st.session_state.state = "GUIDE"
                 st.rerun()
 
+            # ── 角色选择 ──
+            # 确保 session_state 中有一个持久化的 key
+            if "persistent_char" not in st.session_state:
+                st.session_state.persistent_char = DEFAULT_CHARACTER
+            
+            character_options = list(CHARACTERS.keys())
+            character_labels = {k: f"{v['name']} - {v['description']}" for k, v in CHARACTERS.items()}
+
+            # 找到当前持久化角色在选项中的索引，确保 UI 反显正确
+            try:
+                current_idx = character_options.index(st.session_state.persistent_char)
+            except ValueError:
+                current_idx = 0
+
+            # 渲染 selectbox，使用 key="char_selector" 避免冲突
+            selected_character = st.selectbox(
+                "🎭 选择陪你阅读的角色",
+                options=character_options,
+                index=current_idx,
+                key="char_selector", 
+                format_func=lambda x: character_labels.get(x, x),
+                help="选择不同的角色陪你阅读论文",
+            )
+
+            # 实时同步到持久化变量和全局使用的 selected_character
+            st.session_state.persistent_char = selected_character
+            st.session_state.selected_character = selected_character
+
+            current_debug = st.session_state.get("selected_character", "NOT_SET")
+            #st.caption(f"DEBUG: selected_character = {current_debug}")
+
+            # 检查角色资源是否存在
+            char_assets = _load_character_assets(selected_character)
+            missing_char_imgs = []
+            for emotion, path in char_assets.items():
+                if not path.exists():
+                    missing_char_imgs.append(str(path))
+            if missing_char_imgs:
+                st.warning(
+                    f"角色「{_get_character_name(selected_character)}」的图片缺失，将使用默认角色。\n"
+                    + "缺失文件：" + ", ".join([str(p) for p in missing_char_imgs])
+                )
+
+            # ── 阅读模式选择 ──
             if str(st.session_state.get("reading_mode") or "").strip().lower() not in READING_MODE_OPTIONS:
                 st.session_state.reading_mode = "detailed"
             st.selectbox(
@@ -1463,7 +1613,24 @@ def main() -> None:
 
             st.markdown("</div>", unsafe_allow_html=True)
 
-    if st.session_state.state == "SECTION_PICKER":
+        if uploaded is not None:      
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
+                f.write(uploaded.read())
+                tmp_path = Path(f.name)
+            st.session_state._tmp_pdf_path = str(tmp_path)  # type: ignore[attr-defined]
+            st.session_state.chunks = []
+            st.session_state.raw_chunks = []
+            st.session_state.available_sections = []
+            st.session_state.selected_sections = None
+            st.session_state.section_label_to_key = {}
+            st.session_state.section_filter_applied = False
+            st.session_state.state = "PROCESSING"
+            st.rerun()
+
+    elif st.session_state.state == "SECTION_PICKER":
+        # 调试信息
+        #st.write(f"DEBUG SECTION_PICKER: selected_character = {st.session_state.get('selected_character')}")
+        
         inject_game_css(_file_to_data_uri(ASSET_BG))
         ensure_assets_notice()
 
@@ -1488,8 +1655,8 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-        # 初始化 session_state 中的 selected_sections（如果还没有值）
-        if "selected_sections" not in st.session_state:
+        # 初始化 session_state 中的 selected_sections（必须在 widget 实例化前完成）
+        if st.session_state.get("selected_sections") is None:
             st.session_state.selected_sections = sections
 
         # 使用 key 参数直接绑定到 session_state，避免 default 参数导致的点击两次问题
@@ -1504,14 +1671,19 @@ def main() -> None:
         col_back, col_ok = st.columns([1, 1])
         with col_back:
             if st.button("返回上传页", key="btn_back_setup", use_container_width=True):
+                # 保存当前选择的角色（使用临时键名，在selectbox渲染前恢复）
+                saved_character = st.session_state.get("selected_character", DEFAULT_CHARACTER)
                 st.session_state.state = "SETUP"
+                # 保存角色选择到临时键，在selectbox渲染前恢复
+                st.session_state.saved_character = saved_character
                 st.rerun()
         with col_ok:
             if st.button("开始阅读", key="btn_start_with_sections", use_container_width=True):
+                # 调试信息
+                #st.write(f"DEBUG 跳转前: selected_character = {st.session_state.get('selected_character')}")
                 if not selected:
                     st.error("请至少勾选一个章节，不能空选。")
                 else:
-                    st.session_state.selected_sections = list(selected)
                     st.session_state.section_filter_applied = True
                     st.session_state.state = "PROCESSING"
                     st.rerun()
@@ -1519,7 +1691,10 @@ def main() -> None:
     # ════════════════════════════
     # STATE: PROCESSING
     # ════════════════════════════
-    if st.session_state.state == "PROCESSING":
+    elif st.session_state.state == "PROCESSING":
+        # 调试信息
+        #st.write(f"DEBUG PROCESSING: selected_character = {st.session_state.get('selected_character')}")
+        
         inject_game_css(_file_to_data_uri(ASSET_BG))
 
         st.markdown(
@@ -1533,7 +1708,7 @@ def main() -> None:
     正在生成剧本……
   </div>
   <div style="color:rgba(175,150,255,0.55);font-size:0.78rem;margin-top:0.4rem">
-    别急喵！我才不是为你努力的！
+    别急嗷！我才不是为你努力的！
   </div>
 </div>
             """,
@@ -1665,7 +1840,7 @@ def main() -> None:
     # ════════════════════════════
     # STATE: GAME_LOOP
     # ════════════════════════════
-    if st.session_state.state == "GAME_LOOP":
+    elif st.session_state.state == "GAME_LOOP":
         if not st.session_state.generator_ready:
             st.session_state.state = "PROCESSING"
             st.rerun()
