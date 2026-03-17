@@ -7,7 +7,8 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
+import time
+import random
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -898,6 +899,11 @@ def _reset_session() -> None:
     st.session_state.generator_ready  = False
     _clear_prefetch_buffer(bump_run_token=True)
     st.session_state.paper_image_map  = {}
+    # 清理进度状态
+    st.session_state.processing_status_idx = 0
+    st.session_state.processing_progress = 0
+    st.session_state.processing_status = ""
+    st.session_state.processing_phase = 0
 
 
 def advance() -> None:
@@ -1699,23 +1705,104 @@ def main() -> None:
 
         st.markdown(
             """
-<div style="position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);
-  background:rgba(8,5,20,0.85);backdrop-filter:blur(14px);
-  border:1px solid rgba(130,90,230,0.4);border-radius:16px;
-  padding:2rem 3rem;text-align:center;z-index:60;min-width:320px">
-  <div style="font-size:1.5rem;margin-bottom:0.6rem">⚙️</div>
-  <div style="color:rgba(220,200,255,0.9);font-size:1rem;letter-spacing:1px">
-    正在生成剧本……
-  </div>
-  <div style="color:rgba(175,150,255,0.55);font-size:0.78rem;margin-top:0.4rem">
-    别急嗷！我才不是为你努力的！
-  </div>
-</div>
+<style>
+/* 禁用页面所有可交互元素 */
+section[data-testid="stMainBlockContainer"] button,
+section[data-testid="stMainBlockContainer"] input,
+section[data-testid="stMainBlockContainer"] select,
+section[data-testid="stMainBlockContainer"] textarea,
+section[data-testid="stMainBlockContainer"] .stCheckbox,
+section[data-testid="stMainBlockContainer"] .stSelectbox,
+section[data-testid="stMainBlockContainer"] .stFileUploader,
+div[data-testid="stFileUploader"],
+.stApp button,
+.stApp input,
+.stApp select,
+.stApp textarea,
+div[data-baseweb="select"] > div {
+  pointer-events: none !important;
+  opacity: 0.3 !important;
+  cursor: not-allowed !important;
+  filter: grayscale(80%);
+}
+/* 处理多选框 */
+section[data-testid="stMainBlockContainer"] .stMultiSelect {
+  pointer-events: none !important;
+  opacity: 0.3 !important;
+}
+</style>
             """,
             unsafe_allow_html=True,
         )
+        
+        status_container = st.empty()
+
+        status_messages = [
+            "正在解析论文...",
+            "正在识别章节结构...",
+            "正在处理章节筛选...",
+            "正在生成剧本内容...",
+            "马上就好啦！"
+        ]
+
+        def update_status(idx):
+            msg = status_messages[idx]
+            progress = (idx + 1) * 20
+            extra_hint = ""
+            if idx == 3:
+                extra_hint = '<div style="font-size:11px; color:#a79bff; margin-top:6px;">剧本生成时间较长，请耐心等待</div>'
+            status_container.markdown(
+                f"""
+    <div class="p2g-processing-card">
+      <div class="p2g-processing-icon">⚙️</div>
+      <div class="p2g-processing-title">正在生成剧本……</div>
+      <div class="p2g-processing-sub">别急嗷！我才不是为你努力的！</div>
+      <div class="p2g-processing-status">{msg}</div>
+      <div class="p2g-progress-container">
+        <div class="p2g-progress-bar" style="width:{progress}%"></div>
+      </div>
+      {extra_hint}
+    </div>
+    <style>
+    .p2g-processing-card {{
+      position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);
+      background:rgba(8,5,20,0.85);backdrop-filter:blur(14px);
+      border:1px solid rgba(130,90,230,0.4);border-radius:16px;
+      padding:2rem 3rem;text-align:center;z-index:60;min-width:360px
+    }}
+    .p2g-processing-icon {{
+      font-size:1.5rem;margin-bottom:0.6rem;animation:spin 1.5s linear infinite
+    }}
+    @keyframes spin {{
+      0% {{transform:rotate(0deg);}}
+      100% {{transform:rotate(360deg);}}
+    }}
+    .p2g-processing-title {{
+      color:rgba(220,200,255,0.9);font-size:1rem;letter-spacing:1px
+    }}
+    .p2g-processing-sub {{
+      color:rgba(175,150,255,0.55);font-size:0.78rem;margin-top:0.4rem
+    }}
+    .p2g-processing-status {{
+      color:rgba(195,170,255,0.9);font-size:0.9rem;margin-top:1rem;
+      padding:0.5rem 1rem;background:rgba(130,90,230,0.15);
+      border-radius:8px;display:inline-block
+    }}
+    .p2g-progress-container {{
+      width:100%;height:6px;background:rgba(130,90,230,0.2);
+      border-radius:3px;margin-top:1.2rem;overflow:hidden
+    }}
+    .p2g-progress-bar {{
+      height:100%;width:0%;background:linear-gradient(90deg,#7b4fff,#e066ff);
+      border-radius:3px;transition:width 0.4s ease;box-shadow:0 0 10px rgba(160,80,255,0.5)
+    }}
+    </style>
+    """,
+                unsafe_allow_html=True
+            )
 
         if not st.session_state.chunks:
+            update_status(0)
             pdf_path = Path(getattr(st.session_state, "_tmp_pdf_path", ""))
             if not pdf_path.exists():
                 st.error("临时 PDF 文件丢失了，请回到封面重新上传。")
@@ -1748,6 +1835,10 @@ def main() -> None:
 
                 st.session_state.raw_chunks = raw_chunks
                 st.session_state.parser_used = raw_chunks[0].parser if raw_chunks else "pypdf"
+
+                update_status(1)
+                wait_time = random.uniform(1,2)
+                time.sleep(wait_time)
                 section_mapping = _build_common_section_mapping(raw_chunks)
                 available_keys = [
                     k for k in COMMON_SECTION_ORDER
@@ -1768,6 +1859,9 @@ def main() -> None:
                     st.session_state.state = "SECTION_PICKER"
                     st.rerun()
 
+            update_status(2)
+            wait_time = random.uniform(5, 7)
+            time.sleep(wait_time)
             working_chunks: List[PdfChunk] = list(st.session_state.get("raw_chunks") or [])
             if (
                 bool(st.session_state.get("enable_section_pick"))
@@ -1784,10 +1878,10 @@ def main() -> None:
                         for label in (chosen_labels or [])
                         if label in label_to_key
                     }
-                    section_mapping = _build_common_section_mapping(working_chunks)
+                    section_mapping = _build_common_section_mapping(raw_chunks)
                     if chosen_keys:
                         working_chunks = [
-                            c for i, c in enumerate(working_chunks)
+                            c for i, c in enumerate(raw_chunks)
                             if section_mapping.get(i) in chosen_keys
                         ]
                     else:
@@ -1807,13 +1901,13 @@ def main() -> None:
 
             st.session_state.chunks = chunks
             st.session_state.chunk_idx = 0
-            # 合并所有 chunk 的图片映射，供 show_image 渲染时查找
             merged_image_map: Dict[str, str] = {}
             for _c in chunks:
                 merged_image_map.update(dict(getattr(_c, "image_map", ())))
             st.session_state.paper_image_map = merged_image_map
             _clear_prefetch_buffer(bump_run_token=True)
 
+        update_status(3)
         idx = int(st.session_state.chunk_idx)
         idx = max(0, min(idx, len(st.session_state.chunks) - 1))
         st.session_state.chunk_idx = idx
@@ -1834,6 +1928,10 @@ def main() -> None:
                 return
 
         _ensure_next_chunk_prefetch(st.session_state.chunks, idx)
+
+        update_status(4)
+        time.sleep(1)
+
         st.session_state.state = "GAME_LOOP"
         st.rerun()
 
