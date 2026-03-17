@@ -3,3 +3,4 @@ utils/.env
 output/
 __pycache__/
 .DS_Store
+/assets/unseen_materials/
