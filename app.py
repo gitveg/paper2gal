@@ -46,6 +46,11 @@ CHARACTERS = {
         "description": "机智的粉色小狐狸",
         "folder": "lina",
     },
+    "labi": {
+        "name": "蜡笔小新",
+        "description": "活泼可爱的小男孩",
+        "folder": "labi",
+    },
 }
 
 def _get_character_folder(character_id: str) -> Path:
